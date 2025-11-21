@@ -1,0 +1,35 @@
+{
+  "name": "uav-monitoring-prototype",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "start": "webpack serve --config webpack.config.js --mode development --open --hot",
+    "build": "webpack --config webpack.config.js --mode production",
+    "lint": "echo \"Linting is not configured for this prototype\""
+  },
+  "dependencies": {
+    "antd": "^5.16.3",
+    "@ant-design/icons": "^5.3.6",
+    "dayjs": "^1.11.10",
+    "leaflet": "^1.9.4",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-leaflet": "^4.2.1",
+    "react-router-dom": "^6.22.3"
+  },
+  "devDependencies": {
+    "@types/leaflet": "^1.9.8",
+    "@types/react": "^18.2.61",
+    "@types/react-dom": "^18.2.19",
+    "css-loader": "^6.10.0",
+    "html-webpack-plugin": "^5.5.3",
+    "less": "^4.2.0",
+    "less-loader": "^11.1.0",
+    "style-loader": "^3.3.4",
+    "ts-loader": "^9.5.1",
+    "typescript": "^5.4.3",
+    "webpack": "^5.91.0",
+    "webpack-cli": "^5.1.4",
+    "webpack-dev-server": "^4.15.1"
+  }
+}
