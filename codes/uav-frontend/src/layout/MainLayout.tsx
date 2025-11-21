@@ -1,4 +1,10 @@
-import { LaptopOutlined, RadarChartOutlined, RocketOutlined, TeamOutlined } from '@ant-design/icons';
+import {
+  BarChartOutlined,
+  LaptopOutlined,
+  RadarChartOutlined,
+  RocketOutlined,
+  TeamOutlined
+} from '@ant-design/icons';
 import { Button, Layout, Menu, Space, Typography } from 'antd';
 import type { MenuProps } from 'antd';
 import { useMemo } from 'react';
@@ -33,6 +39,11 @@ function MainLayout() {
         key: '/monitoring',
         icon: <RadarChartOutlined />,
         label: '实时监测'
+      },
+      {
+        key: '/analytics',
+        icon: <BarChartOutlined />,
+        label: '数据分析'
       }
     ];
     if (currentUser?.role === 'superadmin') {
@@ -72,9 +83,10 @@ function MainLayout() {
           items={menuItems}
           selectedKeys={selectedKeys}
           onClick={({ key }) => navigate(key)}
+          style={{ fontSize: 16 }}
         />
       </Sider>
-      <Layout>
+      <Layout style={{ height: '100vh' }}>
         <Header
           style={{
             background: '#fff',
@@ -98,7 +110,13 @@ function MainLayout() {
             </Space>
           ) : null}
         </Header>
-        <Content style={{ margin: '24px', minHeight: 'calc(100vh - 112px)' }}>
+        <Content
+          style={{
+            margin: '24px',
+            height: 'calc(100vh - 112px)',
+            overflow: 'auto'
+          }}
+        >
           <Outlet />
         </Content>
       </Layout>

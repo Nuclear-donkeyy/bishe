@@ -6,6 +6,7 @@ import MissionCommander from './pages/MissionCommander';
 import Monitoring from './pages/Monitoring';
 import PersonnelManagement from './pages/PersonnelManagement';
 import Login from './pages/Login';
+import DataAnalytics from './pages/DataAnalytics';
 import { useAuth } from './context/AuthContext';
 
 function App() {
@@ -28,6 +29,7 @@ function App() {
         <Route path="/fleet" element={<FleetCenter />} />
         <Route path="/missions" element={<MissionCommander />} />
         <Route path="/monitoring" element={<Monitoring />} />
+        <Route path="/analytics" element={<DataAnalytics />} />
         {currentUser.role === 'superadmin' ? (
           <Route path="/personnel" element={<PersonnelManagement />} />
         ) : null}

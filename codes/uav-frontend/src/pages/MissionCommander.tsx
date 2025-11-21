@@ -3,6 +3,7 @@ import {
   Badge,
   Button,
   Card,
+  Checkbox,
   Drawer,
   Form,
   Input,
@@ -20,20 +21,28 @@ import {
 import { MapContainer, Polyline, TileLayer } from 'react-leaflet';
 import type { LeafletMouseEvent } from 'leaflet';
 import { useMemo, useState } from 'react';
-import { missionList as initialMissionList, type Mission } from '../data/mock';
+import {
+  missionList as initialMissionList,
+  missionTypeDefinitions,
+  type Mission,
+  type MissionTypeKey
+} from '../data/mock';
 
 function MissionCommander() {
   const [missions, setMissions] = useState<Mission[]>(initialMissionList);
   const runningMissions = useMemo(
-    () => missions.filter(m => m.status !== '完成'),
+    () => missions.filter(m => m.status === '执行中'),
     [missions]
   );
-  const [selectedMissionIds, setSelectedMissionIds] = useState<string[]>(
+  const [selectedMissionIds, setSelectedMissionIds] = useState<string[]>(() =>
     runningMissions.map(m => m.id).slice(0, 2)
   );
   const [monitoringMission, setMonitoringMission] = useState<Mission | null>(null);
   const [createModalOpen, setCreateModalOpen] = useState(false);
-  const [form] = Form.useForm<Omit<Mission, 'route' | 'color' | 'milestones'>>();
+  const [form] = Form.useForm<
+    Omit<Mission, 'route' | 'color' | 'milestones' | 'metrics'> & { metrics: string[] }
+  >();
+  const selectedType = Form.useWatch('missionType', form);
 
   const selectedMissions = useMemo(
     () => missions.filter(mission => selectedMissionIds.includes(mission.id)),
@@ -47,6 +56,7 @@ function MissionCommander() {
   const renderStatusTag = (status: Mission['status']) => {
     if (status === '执行中') return <Tag color="green">执行中</Tag>;
     if (status === '排队') return <Tag color="orange">排队</Tag>;
+    if (status === '异常中止') return <Tag color="red">异常中止</Tag>;
     return <Tag color="blue">完成</Tag>;
   };
 
@@ -60,7 +70,7 @@ function MissionCommander() {
         const newMission: Mission = {
           id: values.id || `M-${Date.now()}`,
           name: values.name,
-          type: values.type,
+          missionType: values.missionType,
           pilot: values.pilot,
           status: values.status,
           priority: values.priority,
@@ -72,7 +82,11 @@ function MissionCommander() {
             [baseLat + 0.02, baseLng + 0.04],
             [baseLat, baseLng]
           ],
-          milestones: values.status === '执行中' ? ['起飞 (模拟)', '航线执行中'] : ['排队中']
+          milestones: values.status === '执行中' ? ['起飞 (模拟)', '航线执行中'] : ['排队中'],
+          metrics:
+            values.metrics && values.metrics.length > 0
+              ? values.metrics
+              : missionTypeDefinitions[values.missionType].metrics.map(metric => metric.label)
         };
 
         setMissions(prev => [newMission, ...prev]);
@@ -86,14 +100,33 @@ function MissionCommander() {
 
   const layoutHeight = 'calc(100vh - 220px)';
 
+  const handleInterruptMission = (mission: Mission) => {
+    if (mission.status !== '执行中') return;
+    Modal.confirm({
+      title: `确认中断任务「${mission.name}」?`,
+      content: '任务将标记为异常中止，无法继续执行。',
+      okText: '确认中断',
+      okType: 'danger',
+      cancelText: '取消',
+      onOk: () => {
+        setMissions(prev =>
+          prev.map(item =>
+            item.id === mission.id ? { ...item, status: '异常中止' } : item
+          )
+        );
+        setSelectedMissionIds(prev => prev.filter(id => id !== mission.id));
+        message.success('任务已中断');
+      }
+    });
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <Row gutter={[16, 16]} style={{ minHeight: layoutHeight }}>
         <Col xs={24} lg={7} style={{ height: layoutHeight }}>
           <Card
             title="任务列表"
-            style={{ height: '100%' }}
-            bodyStyle={{ display: 'flex', flexDirection: 'column', height: '100%', paddingBottom: 0 }}
+            style={{ height: '100%', overflow:'scroll' }}
             extra={
               <Button icon={<PlusOutlined />} type="primary" onClick={() => setCreateModalOpen(true)}>
                 新增任务
@@ -106,11 +139,12 @@ function MissionCommander() {
               renderItem={mission => (
                 <List.Item
                   key={mission.id}
-                  style={{ cursor: 'pointer' }}
+                  style={{ cursor: 'pointer', alignItems: 'flex-start' }}
                   onClick={() => setMonitoringMission(mission)}
                   actions={[renderStatusTag(mission.status)]}
                 >
                   <List.Item.Meta
+                    style={{ width: '100%' }}
                     title={
                       <Space>
                         <EnvironmentOutlined />
@@ -118,10 +152,17 @@ function MissionCommander() {
                       </Space>
                     }
                     description={
-                      <Space split={<span>·</span>} wrap>
-                        <span>类型：{mission.type}</span>
-                        <span>优先级：{mission.priority}</span>
-                        <span>进度：{mission.progress}%</span>
+                      <Space direction="vertical" size={0}>
+                        <Space split={<span>·</span>} wrap>
+                          <span>类型：{mission.missionType}</span>
+                          <span>优先级：{mission.priority}</span>
+                          <span>进度：{mission.progress}%</span>
+                        </Space>
+                        <Space wrap style={{ marginTop: 4 }}>
+                          {mission.metrics.map(metric => (
+                            <Tag key={metric}>{metric}</Tag>
+                          ))}
+                        </Space>
                       </Space>
                     }
                   />
@@ -195,11 +236,23 @@ function MissionCommander() {
             <Badge status="processing" text={`状态：${monitoringMission.status}`} />
             <Badge status="default" text={`责任人：${monitoringMission.pilot}`} />
             <Badge status="default" text={`优先级：${monitoringMission.priority}`} />
+            <Badge status="default" text={`任务类型：${monitoringMission.missionType}`} />
+            {monitoringMission.status === '执行中' ? (
+              <Button danger onClick={() => handleInterruptMission(monitoringMission)}>
+                中断任务
+              </Button>
+            ) : null}
             <Typography.Title level={5}>进度</Typography.Title>
             <Typography.Paragraph>
               当前完成 {monitoringMission.progress}% ，剩余航点{' '}
               {Math.max(0, 100 - monitoringMission.progress)}%。
             </Typography.Paragraph>
+            <Typography.Title level={5}>关键指标</Typography.Title>
+            <Space wrap>
+              {monitoringMission.metrics.map(metric => (
+                <Tag key={metric}>{metric}</Tag>
+              ))}
+            </Space>
             <Typography.Title level={5}>里程碑</Typography.Title>
             <List
               dataSource={monitoringMission.milestones}
@@ -223,7 +276,7 @@ function MissionCommander() {
         onOk={handleCreateMission}
         okText="创建"
       >
-        <Form form={form} layout="vertical">
+        <Form form={form} layout="vertical" initialValues={{ missionType: '森林火情巡查' }}>
           <Form.Item name="id" label="任务编号">
             <Input placeholder="自动生成可留空" />
           </Form.Item>
@@ -235,11 +288,16 @@ function MissionCommander() {
             <Input placeholder="如 森林巡查-南区" />
           </Form.Item>
           <Form.Item
-            name="type"
+            name="missionType"
             label="任务类型"
-            rules={[{ required: true, message: '请输入任务类型' }]}
+            rules={[{ required: true, message: '请选择任务类型' }]}
           >
-            <Input placeholder="林业健康 / 火情巡查 / 空气质量等" />
+            <Select<MissionTypeKey>
+              options={(Object.keys(missionTypeDefinitions) as MissionTypeKey[]).map(key => ({
+                value: key,
+                label: key
+              }))}
+            />
           </Form.Item>
           <Form.Item
             name="pilot"
@@ -277,6 +335,21 @@ function MissionCommander() {
           </Form.Item>
           <Form.Item name="progress" label="初始进度 (%)" initialValue={0}>
             <InputNumber min={0} max={100} style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item name="metrics" label="关注指标">
+            <Checkbox.Group
+              options={
+                selectedType
+                  ? missionTypeDefinitions[selectedType as MissionTypeKey].metrics.map(metric => ({
+                      label: metric.label,
+                      value: metric.label
+                    }))
+                  : []
+              }
+            />
+            {!selectedType ? (
+              <Typography.Text type="secondary">请选择任务类型以加载指标</Typography.Text>
+            ) : null}
           </Form.Item>
         </Form>
       </Modal>

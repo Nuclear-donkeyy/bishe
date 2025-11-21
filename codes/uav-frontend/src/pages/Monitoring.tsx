@@ -18,21 +18,52 @@ import {
   message
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { useMemo, useState } from 'react';
-import type { MonitoringTask, Rule } from '../data/mock';
+import { useEffect, useMemo, useState } from 'react';
+import type { MonitoringTask, Rule, MissionTypeKey } from '../data/mock';
 import { monitoringTasks as initialTasks } from '../data/mock';
+
+const videoMissionTypes = new Set<MissionTypeKey>([
+  '森林火情巡查',
+  '林业健康监测',
+  '土地利用变化复拍'
+]);
+
+const keyMetricsMap: Partial<Record<MissionTypeKey, string[]>> = {
+  森林火情巡查: ['地表温度', '烟雾概率', '风速'],
+  林业健康监测: ['NDVI 平均值', '病害疑似面积'],
+  土地利用变化复拍: ['变化区域', '疑似类型'],
+  城市热岛监测: ['地表温度', '昼夜温差'],
+  空气质量剖面: ['PM2.5', 'PM10', '氧气浓度', '二氧化碳']
+};
 
 function Monitoring() {
   const [tasks, setTasks] = useState<MonitoringTask[]>(initialTasks);
-  const [activeTaskId, setActiveTaskId] = useState(initialTasks[0]?.id ?? '');
+  const [activeTaskId, setActiveTaskId] = useState(
+    initialTasks.find(task => task.status === '执行中')?.id ?? ''
+  );
   const [ruleModalOpen, setRuleModalOpen] = useState(false);
   const [editingRule, setEditingRule] = useState<{ taskId: string; rule?: Rule } | null>(null);
   const [ruleForm] = Form.useForm<Rule>();
 
-  const activeTask = useMemo(
-    () => tasks.find(task => task.id === activeTaskId),
-    [tasks, activeTaskId]
+  const executingTasks = useMemo(
+    () => tasks.filter(task => task.status === '执行中'),
+    [tasks]
   );
+
+  const activeTask = useMemo(
+    () => executingTasks.find(task => task.id === activeTaskId),
+    [executingTasks, activeTaskId]
+  );
+
+  useEffect(() => {
+    if (!executingTasks.length) {
+      setActiveTaskId('');
+      return;
+    }
+    if (!executingTasks.some(task => task.id === activeTaskId)) {
+      setActiveTaskId(executingTasks[0].id);
+    }
+  }, [executingTasks, activeTaskId]);
 
   const dataColumns: ColumnsType<{ label: string; value: string; unit?: string }> = [
     { title: '指标', dataIndex: 'label', key: 'label' },
@@ -89,54 +120,104 @@ function Monitoring() {
       .catch(() => undefined);
   };
 
+  const layoutHeight = 'calc(100vh - 220px)';
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <Row gutter={[16, 16]}>
-        <Col xs={24} md={8}>
-          <Card title="任务条目">
-            <Space direction="vertical" style={{ width: '100%' }}>
-              {tasks.map(task => (
-                <Card
-                  key={task.id}
-                  size="small"
-                  onClick={() => setActiveTaskId(task.id)}
-                  style={{
-                    cursor: 'pointer',
-                    borderColor: task.id === activeTaskId ? '#1677ff' : undefined
-                  }}
-                >
-                  <Space direction="vertical" size={0}>
-                    <Space>
-                      <Typography.Text strong>{task.missionName}</Typography.Text>
-                      <Tag color={task.status === '执行中' ? 'green' : task.status === '计划中' ? 'blue' : 'default'}>
-                        {task.status}
-                      </Tag>
-                    </Space>
-                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                      执行人：{task.owner} · 区域：{task.location} · 设备 {task.devices} 架
-                    </Typography.Text>
-                  </Space>
+      <Row gutter={[16, 16]} style={{ minHeight: layoutHeight }}>
+        <Col xs={24} lg={7} style={{ height: layoutHeight }}>
+          <Card
+            title="执行中任务"
+            style={{ height: '100%' }}
+            bodyStyle={{ display: 'flex', flexDirection: 'column', height: '100%', paddingBottom: 0 }}
+          >
+            <div style={{ flex: 1, overflow: 'auto' }}>
+              {executingTasks.length ? (
+                <Space direction="vertical" style={{ width: '100%' }}>
+                  {executingTasks.map(task => (
+                    <Card
+                      key={task.id}
+                      size="small"
+                      onClick={() => setActiveTaskId(task.id)}
+                      style={{
+                        cursor: 'pointer',
+                        borderColor: task.id === activeTaskId ? '#1677ff' : undefined
+                      }}
+                    >
+                      <Space direction="vertical" size={0}>
+                        <Space>
+                          <Typography.Text strong>{task.missionName}</Typography.Text>
+                          <Tag color="green">执行中</Tag>
+                        </Space>
+                        <Space size="small">
+                          <Tag>{task.missionType}</Tag>
+                        </Space>
+                        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                          执行人：{task.owner} · 区域：{task.location} · 设备 {task.devices} 架
+                        </Typography.Text>
+                      </Space>
+                    </Card>
+                  ))}
+                </Space>
+              ) : (
+                <Card size="small" style={{ textAlign: 'center' }} bordered={false}>
+                  暂无执行中任务
                 </Card>
-              ))}
-            </Space>
+              )}
+            </div>
           </Card>
         </Col>
-        <Col xs={24} md={16}>
+        <Col xs={24} lg={17} style={{ height: layoutHeight }}>
           {activeTask ? (
-            <Space direction="vertical" style={{ width: '100%' }}>
-              <Card title={`${activeTask.missionName} · 数据展示`}>
-                <Row gutter={[16, 16]}>
-                  {activeTask.data.map(item => (
-                    <Col xs={24} md={8} key={item.label}>
-                      <Statistic
-                        title={item.label}
-                        value={item.value}
-                        suffix={item.unit}
-                        valueStyle={{ fontSize: 28 }}
-                      />
-                    </Col>
-                  ))}
-                </Row>
+            <div style={{ height: '100%', display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <Card style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+                <Typography.Title level={4} style={{ marginBottom: 16 }}>
+                  {activeTask.missionName} · 数据展示
+                </Typography.Title>
+                {(() => {
+                  const keyMetricLabels = keyMetricsMap[activeTask.missionType] ?? [];
+                  const keyMetricData = activeTask.data.filter(item =>
+                    keyMetricLabels.includes(item.label)
+                  );
+                  const showVideo =
+                    videoMissionTypes.has(activeTask.missionType) && activeTask.videoUrl;
+                  return showVideo || keyMetricData.length ? (
+                    <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+                      {showVideo ? (
+                        <Col xs={24} md={keyMetricData.length ? 12 : 24}>
+                          <Card size="small" title="实时回传视频">
+                            <video
+                              src={activeTask.videoUrl}
+                              controls
+                              autoPlay
+                              muted
+                              loop
+                              style={{ width: '100%', borderRadius: 8, background: '#000' }}
+                            />
+                          </Card>
+                        </Col>
+                      ) : null}
+                      {keyMetricData.length ? (
+                        <Col xs={24} md={showVideo ? 12 : 24}>
+                          <Card size="small" title="关键指标">
+                            <Row gutter={[12, 12]}>
+                              {keyMetricData.map(item => (
+                                <Col span={12} key={item.label}>
+                                  <Statistic
+                                    title={item.label}
+                                    value={item.value}
+                                    suffix={item.unit}
+                                    valueStyle={{ fontSize: 24 }}
+                                  />
+                                </Col>
+                              ))}
+                            </Row>
+                          </Card>
+                        </Col>
+                      ) : null}
+                    </Row>
+                  ) : null;
+                })()}
                 <Descriptions
                   bordered
                   column={2}
@@ -145,6 +226,7 @@ function Monitoring() {
                   items={[
                     { key: 'owner', label: '责任人', children: activeTask.owner },
                     { key: 'status', label: '状态', children: activeTask.status },
+                    { key: 'type', label: '任务类型', children: activeTask.missionType },
                     { key: 'location', label: '区域', children: activeTask.location },
                     { key: 'devices', label: '设备数', children: `${activeTask.devices} 架` }
                   ]}
@@ -161,6 +243,7 @@ function Monitoring() {
                     新增
                   </Button>
                 }
+                style={{ flex: 1, overflow: 'auto' }}
               >
                 <Table<Rule>
                   rowKey="id"
@@ -208,9 +291,9 @@ function Monitoring() {
                   }}
                 />
               </Card>
-            </Space>
+            </div>
           ) : (
-            <Card>请选择任务以查看数据</Card>
+            <Card style={{ height: '100%' }}>暂无执行中任务</Card>
           )}
         </Col>
       </Row>
