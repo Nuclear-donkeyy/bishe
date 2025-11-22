@@ -22,6 +22,7 @@ import { MapContainer, Polyline, TileLayer } from 'react-leaflet';
 import type { LeafletMouseEvent } from 'leaflet';
 import { useMemo, useState } from 'react';
 import {
+  fleetItems,
   missionList as initialMissionList,
   missionTypeDefinitions,
   type Mission,
@@ -43,6 +44,29 @@ function MissionCommander() {
     Omit<Mission, 'route' | 'color' | 'milestones' | 'metrics'> & { metrics: string[] }
   >();
   const selectedType = Form.useWatch('missionType', form);
+  const availableUavs = useMemo(() => {
+    const busyUavIds = new Set<string>();
+    missions.forEach(mission => {
+      mission.assignedUavs?.forEach(id => busyUavIds.add(id));
+    });
+    const executingMissionNames = new Set(
+      missions.filter(m => m.status === '执行中').map(m => m.name)
+    );
+    return fleetItems.filter(item => {
+      if (item.status !== 'online') return false;
+      if (busyUavIds.has(item.id)) return false;
+      if (executingMissionNames.has(item.mission)) return false;
+      return true;
+    });
+  }, [missions]);
+  const availableUavOptions = useMemo(
+    () =>
+      availableUavs.map(item => ({
+        value: item.id,
+        label: `${item.id} · ${item.model} · ${item.pilot} · 剩余 ${item.battery}%`
+      })),
+    [availableUavs]
+  );
 
   const selectedMissions = useMemo(
     () => missions.filter(mission => selectedMissionIds.includes(mission.id)),
@@ -86,7 +110,8 @@ function MissionCommander() {
           metrics:
             values.metrics && values.metrics.length > 0
               ? values.metrics
-              : missionTypeDefinitions[values.missionType].metrics.map(metric => metric.label)
+              : missionTypeDefinitions[values.missionType].metrics.map(metric => metric.label),
+          assignedUavs: values.assignedUavs && values.assignedUavs.length > 0 ? values.assignedUavs : undefined
         };
 
         setMissions(prev => [newMission, ...prev]);
@@ -163,6 +188,11 @@ function MissionCommander() {
                             <Tag key={metric}>{metric}</Tag>
                           ))}
                         </Space>
+                        {mission.assignedUavs?.length ? (
+                          <Typography.Text type="secondary">
+                            执行无人机：{mission.assignedUavs.join('、')}
+                          </Typography.Text>
+                        ) : null}
                       </Space>
                     }
                   />
@@ -253,6 +283,16 @@ function MissionCommander() {
                 <Tag key={metric}>{metric}</Tag>
               ))}
             </Space>
+            <Typography.Title level={5}>执行无人机</Typography.Title>
+            {monitoringMission.assignedUavs?.length ? (
+              <Space wrap>
+                {monitoringMission.assignedUavs.map(uavId => (
+                  <Tag key={uavId}>{uavId}</Tag>
+                ))}
+              </Space>
+            ) : (
+              <Typography.Text type="secondary">尚未分配无人机</Typography.Text>
+            )}
             <Typography.Title level={5}>里程碑</Typography.Title>
             <List
               dataSource={monitoringMission.milestones}
@@ -331,6 +371,28 @@ function MissionCommander() {
                 { value: '排队', label: '排队' },
                 { value: '完成', label: '完成' }
               ]}
+            />
+          </Form.Item>
+          <Form.Item
+            name="assignedUavs"
+            label="执行无人机"
+            rules={
+              availableUavOptions.length
+                ? [{ required: true, message: '请选择执行无人机' }]
+                : undefined
+            }
+            extra={
+              availableUavOptions.length
+                ? '仅显示在线且未被任务占用的无人机，可多选。'
+                : '暂无空闲无人机，请前往机队中心释放或接入无人机。'
+            }
+          >
+            <Select
+              mode="multiple"
+              placeholder={availableUavOptions.length ? '请选择可用无人机' : '暂无可用无人机'}
+              options={availableUavOptions}
+              disabled={!availableUavOptions.length}
+              maxTagCount="responsive"
             />
           </Form.Item>
           <Form.Item name="progress" label="初始进度 (%)" initialValue={0}>

@@ -108,6 +108,7 @@ export interface Mission {
   color: string;
   milestones: string[];
   metrics: string[];
+  assignedUavs?: string[];
 }
 
 export interface MetricSeriesPoint {
