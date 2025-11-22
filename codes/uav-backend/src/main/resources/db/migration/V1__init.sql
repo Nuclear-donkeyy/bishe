@@ -1,0 +1,170 @@
+CREATE TABLE IF NOT EXISTS users (
+    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+    username VARCHAR(64) NOT NULL UNIQUE,
+    password_hash VARCHAR(255) NOT NULL,
+    name VARCHAR(64) NOT NULL,
+    role ENUM('SUPERADMIN','OPERATOR') NOT NULL DEFAULT 'OPERATOR',
+    status ENUM('ACTIVE','DISABLED') NOT NULL DEFAULT 'ACTIVE',
+    last_login_at DATETIME NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS auth_tokens (
+    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+    user_id BIGINT UNSIGNED NOT NULL,
+    token_hash CHAR(64) NOT NULL,
+    expires_at DATETIME NOT NULL,
+    revoked_at DATETIME NULL,
+    client_ip VARCHAR(45) NULL,
+    user_agent VARCHAR(255) NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    KEY idx_tokens_user (user_id),
+    KEY idx_tokens_hash (token_hash)
+);
+
+CREATE TABLE IF NOT EXISTS uav_devices (
+    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+    uav_code VARCHAR(64) NOT NULL UNIQUE,
+    model VARCHAR(128) NOT NULL,
+    pilot_name VARCHAR(64) NOT NULL,
+    status VARCHAR(32) NOT NULL,
+    link_quality VARCHAR(8) NULL,
+    battery_percent INT NULL,
+    range_km DECIMAL(8,2) NULL,
+    rtt_ms INT NULL,
+    location_lat DECIMAL(9,6) NULL,
+    location_lng DECIMAL(9,6) NULL,
+    location_alt DECIMAL(8,2) NULL,
+    last_heartbeat_at DATETIME NULL,
+    current_mission_id BIGINT UNSIGNED NULL,
+    connection_endpoint VARCHAR(255) NOT NULL,
+    connection_protocol VARCHAR(32) NOT NULL,
+    connection_secret VARCHAR(128) NULL,
+    telemetry_topics JSON NULL,
+    mqtt_username VARCHAR(128) NULL,
+    mqtt_password VARCHAR(255) NULL,
+    metadata JSON NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    KEY idx_uav_status (status)
+);
+
+CREATE TABLE IF NOT EXISTS mission_types (
+    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+    type_code VARCHAR(64) NOT NULL UNIQUE,
+    display_name VARCHAR(64) NOT NULL,
+    description VARCHAR(255) NULL,
+    recommended_sensors JSON NULL,
+    metrics JSON NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS missions (
+    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+    mission_code VARCHAR(64) NOT NULL UNIQUE,
+    name VARCHAR(128) NOT NULL,
+    mission_type VARCHAR(64) NOT NULL,
+    pilot_name VARCHAR(64) NOT NULL,
+    status VARCHAR(16) NOT NULL,
+    priority VARCHAR(8) NOT NULL,
+    progress INT NOT NULL DEFAULT 0,
+    color_hex CHAR(7) NULL,
+    metrics JSON NULL,
+    milestones JSON NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    KEY idx_missions_status (status)
+);
+
+CREATE TABLE IF NOT EXISTS mission_route_points (
+    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+    mission_id BIGINT UNSIGNED NOT NULL,
+    seq INT NOT NULL,
+    lat DECIMAL(9,6) NOT NULL,
+    lng DECIMAL(9,6) NOT NULL,
+    altitude DECIMAL(8,2) NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    KEY idx_route_mission_seq (mission_id, seq)
+);
+
+CREATE TABLE IF NOT EXISTS mission_uav_assignments (
+    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+    mission_id BIGINT UNSIGNED NOT NULL,
+    uav_id BIGINT UNSIGNED NOT NULL,
+    assigned_at DATETIME NOT NULL,
+    released_at DATETIME NULL,
+    role VARCHAR(32) NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    KEY idx_assign_mission (mission_id)
+);
+
+CREATE TABLE IF NOT EXISTS mission_events (
+    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+    mission_id BIGINT UNSIGNED NOT NULL,
+    event_type VARCHAR(64) NOT NULL,
+    payload JSON NULL,
+    occurred_at DATETIME NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    KEY idx_events_mission (mission_id, occurred_at)
+);
+
+CREATE TABLE IF NOT EXISTS monitoring_tasks (
+    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+    task_code VARCHAR(64) NOT NULL UNIQUE,
+    mission_id BIGINT UNSIGNED NULL,
+    mission_name VARCHAR(128) NOT NULL,
+    mission_type VARCHAR(64) NOT NULL,
+    owner_name VARCHAR(64) NOT NULL,
+    status VARCHAR(16) NOT NULL,
+    location_desc VARCHAR(128) NULL,
+    devices_count INT NULL,
+    video_url VARCHAR(255) NULL,
+    stream_id VARCHAR(64) NULL,
+    extra_data JSON NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    KEY idx_monitoring_status (status)
+);
+
+CREATE TABLE IF NOT EXISTS monitoring_rules (
+    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+    task_id BIGINT UNSIGNED NOT NULL,
+    name VARCHAR(128) NOT NULL,
+    metric VARCHAR(64) NOT NULL,
+    threshold VARCHAR(64) NOT NULL,
+    level VARCHAR(8) NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    KEY idx_rules_task (task_id)
+);
+
+CREATE TABLE IF NOT EXISTS analytics_definitions (
+    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+    mission_type VARCHAR(64) NOT NULL,
+    title VARCHAR(128) NOT NULL,
+    description VARCHAR(255) NULL,
+    series_config JSON NOT NULL,
+    display_order INT NOT NULL DEFAULT 0,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS task_executions (
+    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+    execution_code VARCHAR(64) NOT NULL UNIQUE,
+    mission_name VARCHAR(128) NOT NULL,
+    mission_type VARCHAR(64) NOT NULL,
+    location VARCHAR(128) NULL,
+    owner_name VARCHAR(64) NULL,
+    completed_at DATETIME NOT NULL,
+    metrics JSON NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    KEY idx_exec_type_time (mission_type, completed_at)
+);
