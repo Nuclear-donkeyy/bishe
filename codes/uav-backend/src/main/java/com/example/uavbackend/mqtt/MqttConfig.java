@@ -14,6 +14,8 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.integration.annotation.ServiceActivator;
 import org.springframework.integration.channel.DirectChannel;
 import org.springframework.integration.core.MessageProducer;
+import org.springframework.integration.mqtt.core.DefaultMqttPahoClientFactory;
+import org.springframework.integration.mqtt.core.MqttPahoClientFactory;
 import org.springframework.integration.mqtt.inbound.MqttPahoMessageDrivenChannelAdapter;
 import org.springframework.integration.mqtt.support.DefaultPahoMessageConverter;
 import org.springframework.messaging.MessageChannel;
@@ -53,6 +55,13 @@ public class MqttConfig {
   }
 
   @Bean
+  public MqttPahoClientFactory mqttClientFactory() {
+    DefaultMqttPahoClientFactory factory = new DefaultMqttPahoClientFactory();
+    factory.setConnectionOptions(mqttConnectOptions());
+    return factory;
+  }
+
+  @Bean
   public MessageChannel mqttInputChannel() {
     return new DirectChannel();
   }
@@ -60,7 +69,7 @@ public class MqttConfig {
   @Bean
   public MessageProducer inbound() {
     MqttPahoMessageDrivenChannelAdapter adapter =
-        new MqttPahoMessageDrivenChannelAdapter(clientId, mqttConnectOptions(), telemetryTopic);
+        new MqttPahoMessageDrivenChannelAdapter(clientId, mqttClientFactory(), telemetryTopic);
     adapter.setCompletionTimeout(5000);
     adapter.setConverter(new DefaultPahoMessageConverter());
     adapter.setQos(1);
