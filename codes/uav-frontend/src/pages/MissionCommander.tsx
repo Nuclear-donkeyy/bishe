@@ -18,8 +18,8 @@ import {
   Typography,
   message
 } from 'antd';
-import { MapContainer, Polyline, TileLayer } from 'react-leaflet';
-import type { LeafletMouseEvent } from 'leaflet';
+import { CircleMarker, MapContainer, Polyline, TileLayer, useMapEvents } from 'react-leaflet';
+import type { LatLngTuple, LeafletMouseEvent } from 'leaflet';
 import { useMemo, useState } from 'react';
 import {
   fleetItems,
@@ -28,6 +28,18 @@ import {
   type Mission,
   type MissionTypeKey
 } from '../data/mock';
+
+const pointsEqual = (a: LatLngTuple, b: LatLngTuple) =>
+  Math.abs(a[0] - b[0]) < 1e-6 && Math.abs(a[1] - b[1]) < 1e-6;
+
+function RouteClickHandler({ onAddPoint }: { onAddPoint: (point: LatLngTuple) => void }) {
+  useMapEvents({
+    click: event => {
+      onAddPoint([event.latlng.lat, event.latlng.lng]);
+    }
+  });
+  return null;
+}
 
 function MissionCommander() {
   const [missions, setMissions] = useState<Mission[]>(initialMissionList);
@@ -43,7 +55,33 @@ function MissionCommander() {
   const [form] = Form.useForm<
     Omit<Mission, 'route' | 'color' | 'milestones' | 'metrics'> & { metrics: string[] }
   >();
+  const [routeDraft, setRouteDraft] = useState<LatLngTuple[]>([]);
   const selectedType = Form.useWatch('missionType', form);
+  const routeIsClosed =
+    routeDraft.length > 2 && pointsEqual(routeDraft[0], routeDraft[routeDraft.length - 1]);
+
+  const handleRoutePointAdd = (point: LatLngTuple) => {
+    setRouteDraft(prev => [...prev, point]);
+  };
+
+  const handleRouteUndo = () => {
+    setRouteDraft(prev => prev.slice(0, -1));
+  };
+
+  const handleRouteClear = () => {
+    setRouteDraft([]);
+  };
+
+  const handleRouteClose = () => {
+    setRouteDraft(prev => {
+      if (prev.length < 3) return prev;
+      const lastPoint = prev[prev.length - 1];
+      if (pointsEqual(prev[0], lastPoint)) {
+        return prev;
+      }
+      return [...prev, prev[0]];
+    });
+  };
   const availableUavs = useMemo(() => {
     const busyUavIds = new Set<string>();
     missions.forEach(mission => {
@@ -84,13 +122,17 @@ function MissionCommander() {
     return <Tag color="blue">完成</Tag>;
   };
 
+  const creationMapCenter: LatLngTuple = [31.25, 121.45];
+
   const handleCreateMission = () => {
+    if (routeDraft.length < 3) {
+      message.error('请在地图上选择至少 3 个航点，并确保航线闭合');
+      return;
+    }
     form
       .validateFields()
       .then(values => {
-        const randomOffset = Math.random() * 0.04;
-        const baseLat = 31.2 + randomOffset;
-        const baseLng = 121.4 + randomOffset;
+        const normalizedRoute = routeIsClosed ? routeDraft : [...routeDraft, routeDraft[0]];
         const newMission: Mission = {
           id: values.id || `M-${Date.now()}`,
           name: values.name,
@@ -100,12 +142,7 @@ function MissionCommander() {
           priority: values.priority,
           progress: values.progress ?? 0,
           color: values.status === '执行中' ? '#f97316' : '#22c55e',
-          route: [
-            [baseLat, baseLng],
-            [baseLat + 0.05, baseLng],
-            [baseLat + 0.02, baseLng + 0.04],
-            [baseLat, baseLng]
-          ],
+          route: normalizedRoute,
           milestones: values.status === '执行中' ? ['起飞 (模拟)', '航线执行中'] : ['排队中'],
           metrics:
             values.metrics && values.metrics.length > 0
@@ -119,6 +156,7 @@ function MissionCommander() {
         message.success('已新增任务');
         setCreateModalOpen(false);
         form.resetFields();
+        setRouteDraft([]);
       })
       .catch(() => undefined);
   };
@@ -312,6 +350,7 @@ function MissionCommander() {
         onCancel={() => {
           setCreateModalOpen(false);
           form.resetFields();
+          setRouteDraft([]);
         }}
         onOk={handleCreateMission}
         okText="创建"
@@ -414,6 +453,50 @@ function MissionCommander() {
             ) : null}
           </Form.Item>
         </Form>
+        <Typography.Title level={5} style={{ marginTop: 16 }}>
+          航线规划
+        </Typography.Title>
+        <Typography.Paragraph type="secondary" style={{ marginBottom: 8 }}>
+          点击地图添加航点，至少包含 3 个点并闭合。后端会校验航线闭合、起点距离和续航 80% 等规则。
+        </Typography.Paragraph>
+        <div style={{ height: 260, borderRadius: 8, overflow: 'hidden', marginBottom: 12 }}>
+          <MapContainer
+            center={creationMapCenter}
+            zoom={11}
+            style={{ height: '100%', width: '100%' }}
+            attributionControl={false}
+          >
+            <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+            <RouteClickHandler onAddPoint={handleRoutePointAdd} />
+            {routeDraft.length ? (
+              <Polyline
+                positions={routeDraft}
+                pathOptions={{ color: routeIsClosed ? '#22c55e' : '#f97316', weight: 4 }}
+              />
+            ) : null}
+            {routeDraft.map((point, index) => (
+              <CircleMarker
+                key={`${point[0]}-${point[1]}-${index}`}
+                center={point}
+                radius={index === 0 ? 6 : 4}
+                pathOptions={{ color: index === 0 ? '#2563eb' : '#111827', weight: 2 }}
+                fillOpacity={0.8}
+              />
+            ))}
+          </MapContainer>
+        </div>
+        <Space wrap>
+          <Button onClick={handleRouteClose} disabled={routeDraft.length < 3}>
+            闭合航线
+          </Button>
+          <Button onClick={handleRouteUndo} disabled={!routeDraft.length}>
+            撤销航点
+          </Button>
+          <Button onClick={handleRouteClear} disabled={!routeDraft.length}>
+            清除航线
+          </Button>
+          <Typography.Text type="secondary">已选 {routeDraft.length} 个航点</Typography.Text>
+        </Space>
       </Modal>
     </div>
   );
