@@ -16,9 +16,10 @@ import {
   message
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { fleetApi, configApi, userApi, type FleetSummary, type UavDevice } from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import { connectTelemetrySocket } from '../services/ws';
 
 type RegisterForm = {
   uavCode: string;
@@ -28,55 +29,24 @@ type RegisterForm = {
   metadata?: string;
 };
 
-const statusTag = (status?: UavDevice['status']) => {
-  if (status === 'CRITICAL') {
-    return <Tag color="red">离线</Tag>;
+type TelemetryMap = Record<
+  string,
+  {
+    batteryPercent?: number;
+    status?: string;
+    lat?: number;
+    lng?: number;
+    alt?: number;
   }
-  if (status === 'WARNING') {
-    return <Tag color="orange">链路预警</Tag>;
-  }
-  if (status === 'PENDING_CONNECT') {
-    return <Tag color="default">待接入</Tag>;
-  }
-  return <Tag color="green">在线</Tag>;
-};
+>;
 
-const columns: ColumnsType<UavDevice> = [
-  {
-    title: '无人机',
-    dataIndex: 'uavCode',
-    key: 'uavCode',
-    render: (value, record) => (
-      <Space direction="vertical" size={0}>
-        <strong>{value}</strong>
-        <span style={{ color: '#667085', fontSize: 12 }}>{record.model}</span>
-      </Space>
-    )
-  },
-  {
-    title: '飞行员',
-    dataIndex: 'pilotName',
-    key: 'pilotName'
-  },
-  {
-    title: '传感器',
-    dataIndex: 'sensors',
-    key: 'sensors',
-    render: value => (value ? value.split(',').join('、') : '-')
-  },
-  {
-    title: '电量',
-    dataIndex: 'batteryPercent',
-    key: 'batteryPercent',
-    render: value => (value == null ? '-' : `${value}%`)
-  },
-  {
-    title: '状态',
-    dataIndex: 'status',
-    key: 'status',
-    render: statusTag
-  }
-];
+const statusTag = (status?: string) => {
+  if (!status) return <Tag color="default">--</Tag>;
+  if (status.toUpperCase() === 'CRITICAL') return <Tag color="red">离线</Tag>;
+  if (status.toUpperCase() === 'WARNING') return <Tag color="orange">链路预警</Tag>;
+  if (status.toUpperCase() === 'PENDING_CONNECT') return <Tag color="default">待接入</Tag>;
+  return <Tag color="green">{status}</Tag>;
+};
 
 function FleetCenter() {
   const [fleet, setFleet] = useState<UavDevice[]>([]);
@@ -86,6 +56,9 @@ function FleetCenter() {
   const { currentUser } = useAuth();
   const [sensorOptions, setSensorOptions] = useState<{ value: string; label: string }[]>([]);
   const [userOptions, setUserOptions] = useState<{ value: string; label: string }[]>([]);
+  const telemetryRef = useRef<TelemetryMap>({});
+  const [, forceRender] = useState(0);
+  const [wsConnected, setWsConnected] = useState(true);
 
   const load = () => {
     fleetApi.list({ page: 1, pageSize: 200 }).then(res => setFleet(res.items)).catch(() => setFleet([]));
@@ -96,6 +69,23 @@ function FleetCenter() {
 
   useEffect(() => {
     load();
+    const ws = connectTelemetrySocket(
+      payload => {
+        if (!payload || !payload.uavCode) return;
+        const { uavCode, batteryPercent, status, lat, lng, alt } = payload;
+        telemetryRef.current[uavCode] = {
+          batteryPercent,
+          status,
+          lat,
+          lng,
+          alt
+        };
+        setWsConnected(true);
+        forceRender(x => x + 1);
+      },
+      () => setWsConnected(false)
+    );
+    return () => ws.close();
   }, []);
 
   const visibleFleet = useMemo(() => {
@@ -106,10 +96,64 @@ function FleetCenter() {
   const connectionHealth = useMemo(
     () => ({
       avgBattery: 0,
-      slowLinks: visibleFleet.filter(item => item.status !== 'ONLINE').length
+      slowLinks: visibleFleet.filter(item => {
+        const t = telemetryRef.current[item.uavCode];
+        return t && t.status && t.status !== 'ONLINE';
+      }).length
     }),
     [visibleFleet]
   );
+
+  const columns: ColumnsType<UavDevice> = [
+    {
+      title: '无人机',
+      dataIndex: 'uavCode',
+      key: 'uavCode',
+      render: (value, record) => (
+        <Space direction="vertical" size={0}>
+          <strong>{value}</strong>
+          <span style={{ color: '#667085', fontSize: 12 }}>{record.model}</span>
+        </Space>
+      )
+    },
+    {
+      title: '传感器',
+      dataIndex: 'sensors',
+      key: 'sensors',
+      render: value => (value ? value.join('、') : '-')
+    },
+    {
+      title: '飞行员',
+      dataIndex: 'pilotName',
+      key: 'pilotName'
+    },
+    {
+      title: '电量',
+      key: 'battery',
+      render: (_, record) => {
+        const t = telemetryRef.current[record.uavCode];
+        if (!wsConnected) return '连接断开';
+        return t?.batteryPercent != null ? `${t.batteryPercent}%` : '--';
+      }
+    },
+    {
+      title: '状态',
+      key: 'status',
+      render: (_, record) =>
+        !wsConnected
+          ? <Tag color="default">连接断开</Tag>
+          : statusTag(telemetryRef.current[record.uavCode]?.status || record.status)
+    },
+    {
+      title: '经纬度',
+      key: 'location',
+      render: (_, record) => {
+        const t = telemetryRef.current[record.uavCode];
+        if (!wsConnected) return '连接断开';
+        return t && t.lat != null && t.lng != null ? `${t.lat}, ${t.lng}` : '--';
+      }
+    }
+  ];
 
   const handleSubmit = () => {
     form
