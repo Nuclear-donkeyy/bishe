@@ -1,6 +1,12 @@
 spring:
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      database: 0
+      timeout: 5000
   datasource:
-    url: jdbc:mysql://localhost:3307/uav_monitor?serverTimezone=UTC&useSSL=false
+    url: jdbc:mysql://localhost:3307/uav_monitor?serverTimezone=UTC&useSSL=false&allowPublicKeyRetrieval=true
     username: root
     password: 175245
   jackson:
@@ -21,14 +27,7 @@ security:
 mqtt:
   broker-url: tcp://localhost:1883
   client-id: uav-backend-${random.uuid}
-  username: backend
-  password: backend
+#  username: backend
+#  password: backend
   telemetry-topic: uav/+/telemetry
   command-topic-prefix: uav/
-spring:
-  data:
-    redis:
-      host: localhost
-      port: 6379
-      database: 0
-      timeout: 5000
