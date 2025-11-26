@@ -3,9 +3,12 @@ package com.example.uavbackend.mission.dto;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
-import jakarta.validation.constraints.NotNull;
 import java.util.List;
 
+/**
+ * 创建/更新任务的请求体，对应 /api/missions。
+ * 携带任务基础信息、航线、指标/里程碑配置以及分配的无人机。
+ */
 public record MissionCreateRequest(
     String missionCode,
     @NotBlank String name,

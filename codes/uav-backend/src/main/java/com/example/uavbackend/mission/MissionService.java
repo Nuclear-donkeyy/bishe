@@ -1,8 +1,8 @@
 package com.example.uavbackend.mission;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.example.uavbackend.mission.dto.MissionCreateRequest;
 import com.example.uavbackend.mission.dto.MissionDto;
-import jakarta.transaction.Transactional;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
@@ -10,23 +10,28 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
 public class MissionService {
-  private final MissionRepository missionRepository;
-  private final MissionRoutePointRepository routePointRepository;
+  private final MissionMapper missionMapper;
+  private final MissionRoutePointMapper routePointMapper;
 
   public List<MissionDto> list(List<String> statuses) {
-    List<Mission> missions =
-        statuses == null || statuses.isEmpty()
-            ? missionRepository.findAll()
-            : missionRepository.findByStatusIn(statuses);
+    LambdaQueryWrapper<Mission> wrapper = new LambdaQueryWrapper<>();
+    if (statuses != null && !statuses.isEmpty()) {
+      wrapper.in(Mission::getStatus, statuses);
+    }
+    List<Mission> missions = missionMapper.selectList(wrapper);
     return missions.stream().map(this::toDto).collect(Collectors.toList());
   }
 
   public Optional<MissionDto> findByCode(String code) {
-    return missionRepository.findByMissionCode(code).map(this::toDtoWithRoute);
+    Mission mission =
+        missionMapper.selectOne(
+            new LambdaQueryWrapper<Mission>().eq(Mission::getMissionCode, code));
+    return Optional.ofNullable(mission).map(this::toDtoWithRoute);
   }
 
   @Transactional
@@ -43,35 +48,38 @@ public class MissionService {
     mission.setColorHex(request.status().equals("执行中") ? "#f97316" : "#22c55e");
     mission.setMetrics(JsonUtils.toJson(request.metrics()));
     mission.setMilestones(JsonUtils.toJson(request.milestones()));
-    Mission saved = missionRepository.save(mission);
-    saveRoutePoints(saved.getId(), request.route());
-    return toDtoWithRoute(saved);
+    missionMapper.insert(mission);
+    saveRoutePoints(mission.getId(), request.route());
+    return toDtoWithRoute(mission);
   }
 
   @Transactional
   public MissionDto updateProgress(String missionCode, Integer progress) {
     Mission mission =
-        missionRepository
-            .findByMissionCode(missionCode)
-            .orElseThrow(() -> new IllegalArgumentException("任务不存在"));
+        missionMapper.selectOne(
+            new LambdaQueryWrapper<Mission>().eq(Mission::getMissionCode, missionCode));
+    if (mission == null) {
+      throw new IllegalArgumentException("任务不存在");
+    }
     mission.setProgress(progress);
-    Mission saved = missionRepository.save(mission);
-    return toDto(saved);
+    missionMapper.updateById(mission);
+    return toDto(mission);
   }
 
   @Transactional
   public void interrupt(String missionCode) {
-    missionRepository
-        .findByMissionCode(missionCode)
-        .ifPresent(
-            mission -> {
-              mission.setStatus("异常中止");
-              missionRepository.save(mission);
-            });
+    Mission mission =
+        missionMapper.selectOne(
+            new LambdaQueryWrapper<Mission>().eq(Mission::getMissionCode, missionCode));
+    if (mission != null) {
+      mission.setStatus("异常中止");
+      missionMapper.updateById(mission);
+    }
   }
 
   private void saveRoutePoints(Long missionId, List<List<Double>> points) {
-    routePointRepository.deleteAll(routePointRepository.findByMissionIdOrderBySeqAsc(missionId));
+    routePointMapper.delete(
+        new LambdaQueryWrapper<MissionRoutePoint>().eq(MissionRoutePoint::getMissionId, missionId));
     for (int i = 0; i < points.size(); i++) {
       List<Double> p = points.get(i);
       MissionRoutePoint point = new MissionRoutePoint();
@@ -79,12 +87,16 @@ public class MissionService {
       point.setSeq(i + 1);
       point.setLat(BigDecimal.valueOf(p.get(0)));
       point.setLng(BigDecimal.valueOf(p.get(1)));
-      routePointRepository.save(point);
+      routePointMapper.insert(point);
     }
   }
 
   private MissionDto toDto(Mission entity) {
-    List<MissionRoutePoint> route = routePointRepository.findByMissionIdOrderBySeqAsc(entity.getId());
+    List<MissionRoutePoint> route =
+        routePointMapper.selectList(
+            new LambdaQueryWrapper<MissionRoutePoint>()
+                .eq(MissionRoutePoint::getMissionId, entity.getId())
+                .orderByAsc(MissionRoutePoint::getSeq));
     return new MissionDto(
         entity.getId(),
         entity.getMissionCode(),

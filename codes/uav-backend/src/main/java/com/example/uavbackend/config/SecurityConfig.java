@@ -1,8 +1,5 @@
 package com.example.uavbackend.config;
 
-import com.example.uavbackend.security.TokenAuthenticationFilter;
-import com.example.uavbackend.security.TokenAuthenticationProvider;
-import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -14,14 +11,18 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
+import com.example.uavbackend.security.TokenAuthenticationFilter;
+import com.example.uavbackend.security.TokenAuthenticationProvider;
+
 @Configuration
-@RequiredArgsConstructor
 public class SecurityConfig {
-  private final TokenAuthenticationProvider tokenAuthenticationProvider;
-  private final TokenAuthenticationFilter tokenAuthenticationFilter;
 
   @Bean
-  public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+  public SecurityFilterChain securityFilterChain(
+      HttpSecurity http,
+      TokenAuthenticationProvider tokenAuthenticationProvider,
+      TokenAuthenticationFilter tokenAuthenticationFilter)
+      throws Exception {
     http.csrf(csrf -> csrf.disable())
         .sessionManagement(sess -> sess.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
         .authorizeHttpRequests(

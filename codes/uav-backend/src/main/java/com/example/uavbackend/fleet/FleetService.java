@@ -1,25 +1,26 @@
 package com.example.uavbackend.fleet;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.example.uavbackend.fleet.dto.FleetSummaryDto;
 import com.example.uavbackend.fleet.dto.UavDeviceDto;
 import com.example.uavbackend.fleet.dto.UavRequest;
-import jakarta.transaction.Transactional;
-import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
 public class FleetService {
-  private final UavDeviceRepository deviceRepository;
+  private final UavDeviceMapper deviceMapper;
 
   public FleetSummaryDto summary() {
-    List<UavDevice> all = deviceRepository.findAll();
+    List<UavDevice> all = deviceMapper.selectList(null);
     long online = all.stream().filter(d -> d.getStatus() == UavStatus.ONLINE).count();
     long warning =
         all.stream().filter(d -> d.getStatus() == UavStatus.WARNING || d.getStatus() == UavStatus.CRITICAL).count();
@@ -28,17 +29,23 @@ public class FleetService {
     return new FleetSummaryDto(online, warning, 0L, Math.round(avgRtt));
   }
 
-  public Page<UavDeviceDto> list(List<UavStatus> statuses, int page, int size) {
-    PageRequest pageable = PageRequest.of(Math.max(page - 1, 0), size);
-    Page<UavDevice> pageResult =
-        statuses == null || statuses.isEmpty()
-            ? deviceRepository.findAll(pageable)
-            : deviceRepository.findAllByStatusIn(statuses, pageable);
-    return pageResult.map(this::toDto);
+  public org.springframework.data.domain.Page<UavDeviceDto> list(List<UavStatus> statuses, int page, int size) {
+    LambdaQueryWrapper<UavDevice> wrapper = new LambdaQueryWrapper<>();
+    if (statuses != null && !statuses.isEmpty()) {
+      wrapper.in(UavDevice::getStatus, statuses);
+    }
+    Page<UavDevice> mpPage = deviceMapper.selectPage(Page.of(Math.max(page, 1), size), wrapper);
+    List<UavDeviceDto> content = mpPage.getRecords().stream().map(this::toDto).toList();
+    return new PageImpl<>(content, PageRequest.of(Math.max(page - 1, 0), size), mpPage.getTotal());
   }
 
   public List<UavDeviceDto> available(List<String> excludeMissionIds) {
-    return deviceRepository.findByStatus(UavStatus.ONLINE).stream().map(this::toDto).collect(Collectors.toList());
+    // excludeMissionIds currently unused; filter by status only
+    return deviceMapper
+        .selectList(new LambdaQueryWrapper<UavDevice>().eq(UavDevice::getStatus, UavStatus.ONLINE))
+        .stream()
+        .map(this::toDto)
+        .collect(Collectors.toList());
   }
 
   @Transactional
@@ -55,24 +62,25 @@ public class FleetService {
     device.setMqttUsername(request.connection().mqttUsername());
     device.setMqttPassword(request.connection().mqttPassword());
     device.setMetadata(request.metadata());
-    deviceRepository.save(device);
+    deviceMapper.insert(device);
     return toDto(device);
   }
 
   public void applyTelemetry(String uavCode, UavTelemetry telemetry) {
-    deviceRepository
-        .findByUavCode(uavCode)
-        .ifPresent(
-            device -> {
-              device.setBatteryPercent(telemetry.getBatteryPercent());
-              device.setRangeKm(telemetry.getRangeKm());
-              device.setLocationLat(telemetry.getLocationLat());
-              device.setLocationLng(telemetry.getLocationLng());
-              device.setLocationAlt(telemetry.getLocationAlt());
-              device.setRttMs(telemetry.getRttMs());
-              device.setLastHeartbeatAt(Instant.now());
-              device.setStatus(UavStatus.ONLINE);
-            });
+    UavDevice device =
+        deviceMapper.selectOne(
+            new LambdaQueryWrapper<UavDevice>().eq(UavDevice::getUavCode, uavCode));
+    if (device != null) {
+      device.setBatteryPercent(telemetry.getBatteryPercent());
+      device.setRangeKm(telemetry.getRangeKm());
+      device.setLocationLat(telemetry.getLocationLat());
+      device.setLocationLng(telemetry.getLocationLng());
+      device.setLocationAlt(telemetry.getLocationAlt());
+      device.setRttMs(telemetry.getRttMs());
+      device.setLastHeartbeatAt(Instant.now());
+      device.setStatus(UavStatus.ONLINE);
+      deviceMapper.updateById(device);
+    }
   }
 
   private UavDeviceDto toDto(UavDevice entity) {

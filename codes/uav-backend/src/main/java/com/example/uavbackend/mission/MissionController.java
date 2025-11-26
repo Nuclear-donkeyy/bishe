@@ -1,5 +1,6 @@
 package com.example.uavbackend.mission;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.example.uavbackend.mission.dto.MissionCreateRequest;
 import com.example.uavbackend.mission.dto.MissionDto;
 import jakarta.validation.Valid;
@@ -20,11 +21,11 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class MissionController {
   private final MissionService missionService;
-  private final MissionTypeRepository missionTypeRepository;
+  private final MissionTypeMapper missionTypeMapper;
 
   @GetMapping("/mission-types")
   public List<MissionTypeDefinition> missionTypes() {
-    return missionTypeRepository.findAll();
+    return missionTypeMapper.selectList(new LambdaQueryWrapper<>());
   }
 
   @GetMapping("/missions")

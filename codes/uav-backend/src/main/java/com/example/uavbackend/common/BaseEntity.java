@@ -1,39 +1,22 @@
 package com.example.uavbackend.common;
 
-import jakarta.persistence.Column;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
-import jakarta.persistence.Id;
-import jakarta.persistence.MappedSuperclass;
-import jakarta.persistence.PrePersist;
-import jakarta.persistence.PreUpdate;
+import com.baomidou.mybatisplus.annotation.FieldFill;
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
+import com.baomidou.mybatisplus.annotation.TableId;
 import java.time.Instant;
 import lombok.Getter;
 import lombok.Setter;
 
 @Getter
 @Setter
-@MappedSuperclass
 public abstract class BaseEntity {
-  @Id
-  @GeneratedValue(strategy = GenerationType.IDENTITY)
+  @TableId(type = IdType.AUTO)
   private Long id;
 
-  @Column(name = "created_at", nullable = false, updatable = false)
+  @TableField(value = "created_at", fill = FieldFill.INSERT)
   private Instant createdAt;
 
-  @Column(name = "updated_at", nullable = false)
+  @TableField(value = "updated_at", fill = FieldFill.INSERT_UPDATE)
   private Instant updatedAt;
-
-  @PrePersist
-  protected void onCreate() {
-    Instant now = Instant.now();
-    this.createdAt = now;
-    this.updatedAt = now;
-  }
-
-  @PreUpdate
-  protected void onUpdate() {
-    this.updatedAt = Instant.now();
-  }
 }

@@ -1,9 +1,9 @@
 package com.example.uavbackend.auth;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.example.uavbackend.auth.dto.LoginRequest;
 import com.example.uavbackend.auth.dto.LoginResponse;
 import com.example.uavbackend.auth.dto.UserDto;
-import jakarta.transaction.Transactional;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
@@ -12,47 +12,61 @@ import java.util.HexFormat;
 import java.util.Optional;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
 public class AuthService {
-  private final UserRepository userRepository;
-  private final AuthTokenRepository tokenRepository;
+  private final UserMapper userMapper;
+  private final AuthTokenMapper tokenMapper;
   private final PasswordEncoder passwordEncoder;
 
   @Value("${security.jwt.expiration-minutes:120}")
   private long expirationMinutes;
 
   public Optional<UserDto> findUserByToken(String token) {
-    return tokenRepository
-        .findByTokenHash(hash(token))
-        .filter(t -> t.isActive(Instant.now()))
-        .flatMap(t -> userRepository.findById(t.getUserId()))
-        .map(this::toDto);
+    String tokenHash = hash(token);
+    Instant now = Instant.now();
+    AuthToken authToken =
+        tokenMapper.selectOne(
+            new LambdaQueryWrapper<AuthToken>().eq(AuthToken::getTokenHash, tokenHash));
+    if (authToken == null || !authToken.isActive(now)) {
+      return Optional.empty();
+    }
+    User user = userMapper.selectById(authToken.getUserId());
+    return Optional.ofNullable(user).map(this::toDto);
   }
 
   public Optional<AuthToken> resolveToken(String token) {
-    return tokenRepository
-        .findByTokenHash(hash(token))
-        .filter(t -> t.isActive(Instant.now()));
+    String tokenHash = hash(token);
+    AuthToken authToken =
+        tokenMapper.selectOne(
+            new LambdaQueryWrapper<AuthToken>().eq(AuthToken::getTokenHash, tokenHash));
+    if (authToken == null || !authToken.isActive(Instant.now())) {
+      return Optional.empty();
+    }
+    return Optional.of(authToken);
   }
 
   @Transactional
   public LoginResponse login(LoginRequest request, String clientIp, String userAgent) {
     User user =
-        userRepository
-            .findByUsername(request.username())
-            .orElseThrow(() -> new IllegalArgumentException("账号或密码错误"));
+        Optional.ofNullable(
+                userMapper.selectOne(
+                    new LambdaQueryWrapper<User>().eq(User::getUsername, request.username())))
+            .orElseThrow(() -> new IllegalArgumentException("账户或密码错误"));
     if (user.getStatus() == UserStatus.DISABLED) {
-      throw new IllegalStateException("账号已禁用");
+      throw new IllegalStateException("账户已禁用");
     }
     if (!passwordEncoder.matches(request.password(), user.getPasswordHash())) {
-      throw new IllegalArgumentException("账号或密码错误");
+      throw new IllegalArgumentException("账户或密码错误");
     }
     user.setLastLoginAt(Instant.now());
+    userMapper.updateById(user);
 
     String tokenValue = UUID.randomUUID().toString().replace("-", "");
     AuthToken token = new AuthToken();
@@ -61,18 +75,20 @@ public class AuthService {
     token.setExpiresAt(Instant.now().plus(Duration.ofMinutes(expirationMinutes)));
     token.setClientIp(clientIp);
     token.setUserAgent(userAgent);
-    tokenRepository.save(token);
+    tokenMapper.insert(token);
     return new LoginResponse(tokenValue, toDto(user));
   }
 
   @Transactional
   public void logout(String token) {
-    tokenRepository
-        .findByTokenHash(hash(token))
-        .ifPresent(
-            t -> {
-              t.setRevokedAt(Instant.now());
-            });
+    String tokenHash = hash(token);
+    AuthToken authToken =
+        tokenMapper.selectOne(
+            new LambdaQueryWrapper<AuthToken>().eq(AuthToken::getTokenHash, tokenHash));
+    if (authToken != null) {
+      authToken.setRevokedAt(Instant.now());
+      tokenMapper.updateById(authToken);
+    }
   }
 
   private String hash(String raw) {
