@@ -1,12 +1,10 @@
 package com.example.uavbackend.mqtt;
 
 import com.example.uavbackend.fleet.FleetService;
+import com.example.uavbackend.fleet.TelemetryService;
 import com.example.uavbackend.fleet.UavTelemetry;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import java.math.BigDecimal;
-import java.nio.charset.StandardCharsets;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.eclipse.paho.client.mqttv3.MqttConnectOptions;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -20,9 +18,14 @@ import org.springframework.integration.mqtt.inbound.MqttPahoMessageDrivenChannel
 import org.springframework.integration.mqtt.support.DefaultPahoMessageConverter;
 import org.springframework.messaging.MessageChannel;
 import org.springframework.messaging.MessageHandler;
+import org.springframework.util.StringUtils;
+
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Configuration
 @RequiredArgsConstructor
+@Slf4j
 public class MqttConfig {
   @Value("${mqtt.broker-url}")
   private String brokerUrl;
@@ -39,8 +42,10 @@ public class MqttConfig {
   @Value("${mqtt.telemetry-topic}")
   private String telemetryTopic;
 
+  private static final Pattern UAV_TOPIC_PATTERN = Pattern.compile("uav/([^/]+)/telemetry");
+
   private final FleetService fleetService;
-  private final ObjectMapper objectMapper = new ObjectMapper();
+  private final TelemetryService telemetryService;
 
   @Bean
   public MqttConnectOptions mqttConnectOptions() {
@@ -71,7 +76,9 @@ public class MqttConfig {
     MqttPahoMessageDrivenChannelAdapter adapter =
         new MqttPahoMessageDrivenChannelAdapter(clientId, mqttClientFactory(), telemetryTopic);
     adapter.setCompletionTimeout(5000);
-    adapter.setConverter(new DefaultPahoMessageConverter());
+    DefaultPahoMessageConverter converter = new DefaultPahoMessageConverter();
+    converter.setPayloadAsBytes(false);
+    adapter.setConverter(converter);
     adapter.setQos(1);
     adapter.setOutputChannel(mqttInputChannel());
     return adapter;
@@ -83,27 +90,28 @@ public class MqttConfig {
     return message -> {
       String topic = (String) message.getHeaders().get("mqtt_receivedTopic");
       String payload = (String) message.getPayload();
+      String uavCode = extractUavCode(topic);
+      if (!StringUtils.hasText(uavCode)) {
+        return;
+      }
       try {
-        JsonNode node = objectMapper.readTree(payload.getBytes(StandardCharsets.UTF_8));
-        String type = node.path("type").asText();
-        if ("uav.telemetry".equals(type)) {
-          String uavId = node.path("uavId").asText();
-          UavTelemetry telemetry = new UavTelemetry();
-          telemetry.setBatteryPercent(node.path("battery").isMissingNode() ? null : node.path("battery").asInt());
-          telemetry.setRangeKm(node.path("rangeKm").isMissingNode() ? null : BigDecimal.valueOf(node.path("rangeKm").asDouble()));
-          if (node.has("location")) {
-            telemetry.setLocationLat(BigDecimal.valueOf(node.path("location").path("lat").asDouble()));
-            telemetry.setLocationLng(BigDecimal.valueOf(node.path("location").path("lng").asDouble()));
-            telemetry.setLocationAlt(BigDecimal.valueOf(node.path("location").path("alt").asDouble()));
-          }
-          if (node.has("rtt")) {
-            telemetry.setRttMs(node.path("rtt").asInt());
-          }
-          fleetService.applyTelemetry(uavId, telemetry);
-        }
+        telemetryService.upsertTelemetry(uavCode, payload);
+        log.info("MQTT telemetry received, topic={}, uavCode={}, cachedToRedis=true", topic, uavCode);
+        // Telemetry is only cached to Redis for real-time push; do not touch DB here.
       } catch (Exception e) {
-        // log error in real implementation
+        log.error("MQTT telemetry handling failed, topic={}, uavCode={}, payload={}", topic, uavCode, payload, e);
       }
     };
+  }
+
+  private String extractUavCode(String topic) {
+    if (!StringUtils.hasText(topic)) {
+      return null;
+    }
+    Matcher matcher = UAV_TOPIC_PATTERN.matcher(topic);
+    if (matcher.matches()) {
+      return matcher.group(1);
+    }
+    return null;
   }
 }

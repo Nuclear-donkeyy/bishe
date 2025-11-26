@@ -58,7 +58,7 @@ function FleetCenter() {
   const [userOptions, setUserOptions] = useState<{ value: string; label: string }[]>([]);
   const telemetryRef = useRef<TelemetryMap>({});
   const [, forceRender] = useState(0);
-  const [wsConnected, setWsConnected] = useState(true);
+  const [wsConnected, setWsConnected] = useState(false);
 
   const load = () => {
     fleetApi.list({ page: 1, pageSize: 200 }).then(res => setFleet(res.items)).catch(() => setFleet([]));
@@ -69,8 +69,8 @@ function FleetCenter() {
 
   useEffect(() => {
     load();
-    const ws = connectTelemetrySocket(
-      payload => {
+    const client = connectTelemetrySocket({
+      onMessage: payload => {
         if (!payload || !payload.uavCode) return;
         const { uavCode, batteryPercent, status, lat, lng, alt } = payload;
         telemetryRef.current[uavCode] = {
@@ -83,9 +83,10 @@ function FleetCenter() {
         setWsConnected(true);
         forceRender(x => x + 1);
       },
-      () => setWsConnected(false)
-    );
-    return () => ws.close();
+      onConnect: () => setWsConnected(true),
+      onDisconnect: () => setWsConnected(false)
+    });
+    return () => client.deactivate();
   }, []);
 
   const visibleFleet = useMemo(() => {
