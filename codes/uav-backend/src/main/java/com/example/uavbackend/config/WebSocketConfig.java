@@ -12,10 +12,8 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
   @Override
   public void registerStompEndpoints(StompEndpointRegistry registry) {
-    registry
-        .addEndpoint("/ws/uav-telemetry")
-        .setAllowedOriginPatterns("*")
-        .withSockJS();
+    // Use native WebSocket STOMP endpoint (front-end connects via ws://.../ws/uav-telemetry)
+    registry.addEndpoint("/ws/uav-telemetry").setAllowedOriginPatterns("*");
   }
 
   @Override

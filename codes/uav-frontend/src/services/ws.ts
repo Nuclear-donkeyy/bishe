@@ -28,16 +28,8 @@ export type TelemetryStompClient = {
   deactivate: () => void;
 };
 
-const WS_BASE = 'http://localhost:8080/ws/uav-telemetry';
+const WS_URL = 'ws://localhost:8080/ws/uav-telemetry';
 const RECONNECT_DELAY = 4000;
-
-const createSockJsUrl = () => {
-  const server = Math.floor(Math.random() * 1000)
-    .toString()
-    .padStart(3, '0');
-  const session = Math.random().toString(36).substring(2, 10);
-  return `${WS_BASE.replace(/^http/, 'ws')}/${server}/${session}/websocket`;
-};
 
 const parseStompFrame = (frame: string) => {
   const nullIndex = frame.indexOf('\0');
@@ -57,7 +49,7 @@ const parseStompFrame = (frame: string) => {
   return { command, headers, body };
 };
 
-class SockJsStompClient {
+class StompWebSocketClient {
   private socket?: WebSocket;
   private subscriptions: Subscription[] = [];
   private connected = false;
@@ -78,10 +70,11 @@ class SockJsStompClient {
   }
 
   private startConnection() {
-    const url = createSockJsUrl();
-    this.socket = new WebSocket(url);
+    console.info('[WS] connecting to', WS_URL);
+    this.socket = new WebSocket(WS_URL);
 
     this.socket.onopen = () => {
+      console.info('[WS] socket opened, sending CONNECT frame');
       this.sendStompFrame('CONNECT', {
         'accept-version': '1.2',
         'heart-beat': '10000,10000'
@@ -90,21 +83,17 @@ class SockJsStompClient {
 
     this.socket.onmessage = event => {
       const data = event.data as string;
-      if (data === 'o') return; // SockJS open frame
-
-      if (data.startsWith('a')) {
-        let messages: string[] = [];
-        try {
-          messages = JSON.parse(data.slice(1));
-        } catch {
-          return;
-        }
-        messages.forEach(frame => this.handleStompFrame(frame));
-      }
+      this.handleStompFrame(data);
     };
 
-    this.socket.onerror = () => this.handleDisconnect();
-    this.socket.onclose = () => this.handleDisconnect();
+    this.socket.onerror = ev => {
+      console.error('[WS] socket error', ev);
+      this.handleDisconnect();
+    };
+    this.socket.onclose = ev => {
+      console.warn('[WS] socket closed', ev.code, ev.reason);
+      this.handleDisconnect();
+    };
   }
 
   private handleDisconnect() {
@@ -124,6 +113,7 @@ class SockJsStompClient {
 
     if (command === 'CONNECTED') {
       this.connected = true;
+      console.info('[WS] STOMP connected');
       this.options.onConnect?.();
       this.resubscribe();
       return;
@@ -132,10 +122,16 @@ class SockJsStompClient {
     if (command === 'MESSAGE') {
       try {
         const payload = JSON.parse(body || '{}');
+        console.debug('[WS] message received', headers.destination, payload);
         this.options.onMessage(payload);
-      } catch {
-        // ignore parse errors
+      } catch (e) {
+        console.warn('[WS] failed to parse message body', body, e);
       }
+      return;
+    }
+
+    if (command === 'ERROR') {
+      console.error('[WS] STOMP error frame', headers, body);
     }
   }
 
@@ -164,12 +160,12 @@ class SockJsStompClient {
     Object.entries(headers).forEach(([key, value]) => lines.push(`${key}:${value}`));
     lines.push('', '');
     const frame = `${lines.join('\n')}\0`;
-    this.socket.send(JSON.stringify([frame]));
+    this.socket.send(frame);
   }
 }
 
 export function connectTelemetrySocket(options: TelemetrySocketOptions): TelemetryStompClient {
-  const client = new SockJsStompClient(options);
+  const client = new StompWebSocketClient(options);
   client.activate();
   return client;
 }
