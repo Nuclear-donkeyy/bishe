@@ -8,6 +8,7 @@
     "lint": "echo \"Linting is not configured for this prototype\""
   },
   "dependencies": {
+    "axios": "^1.6.8",
     "antd": "^5.16.3",
     "@ant-design/icons": "^5.3.6",
     "echarts": "^5.5.0",

@@ -7,6 +7,7 @@ import Monitoring from './pages/Monitoring';
 import PersonnelManagement from './pages/PersonnelManagement';
 import Login from './pages/Login';
 import DataAnalytics from './pages/DataAnalytics';
+import ConfigCenter from './pages/ConfigCenter';
 import { useAuth } from './context/AuthContext';
 
 function App() {
@@ -32,6 +33,9 @@ function App() {
         <Route path="/analytics" element={<DataAnalytics />} />
         {currentUser.role === 'superadmin' ? (
           <Route path="/personnel" element={<PersonnelManagement />} />
+        ) : null}
+        {currentUser.role === 'superadmin' ? (
+          <Route path="/config-center" element={<ConfigCenter />} />
         ) : null}
       </Route>
       <Route path="/login" element={<Navigate to="/dashboard" replace />} />

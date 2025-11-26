@@ -1,32 +1,47 @@
-import { createContext, useContext, useMemo, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import { userAccounts, type UserAccount } from '../data/mock';
+import { authApi, type UserInfo } from '../services/api';
+import { getToken, setToken } from '../services/http';
 
 interface AuthContextValue {
-  currentUser: UserAccount | null;
-  login: (username: string, password: string) => Promise<UserAccount>;
+  currentUser: UserInfo | null;
+  login: (username: string, password: string) => Promise<UserInfo>;
   logout: () => void;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [currentUser, setCurrentUser] = useState<UserAccount | null>(null);
+  const [currentUser, setCurrentUser] = useState<UserInfo | null>(null);
+
+  useEffect(() => {
+    const token = getToken();
+    if (token) {
+      authApi
+        .profile()
+        .then(user => setCurrentUser({ ...user, role: (user.role as string)?.toLowerCase?.() ?? user.role }))
+        .catch(() => {
+          setToken(null);
+          setCurrentUser(null);
+        });
+    }
+  }, []);
 
   const value = useMemo<AuthContextValue>(
     () => ({
       currentUser,
       login: async (username, password) => {
-        const user = userAccounts.find(
-          account => account.username === username && account.password === password
-        );
-        if (!user) {
-          return Promise.reject(new Error('账号或密码错误'));
-        }
+        const res = await authApi.login({ username, password });
+        setToken(res.token);
+        const user = { ...res.user, role: (res.user.role as string)?.toLowerCase?.() ?? res.user.role };
         setCurrentUser(user);
         return user;
       },
-      logout: () => setCurrentUser(null)
+      logout: () => {
+        setToken(null);
+        setCurrentUser(null);
+        authApi.logout().catch(() => undefined);
+      }
     }),
     [currentUser]
   );

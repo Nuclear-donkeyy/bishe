@@ -3,7 +3,8 @@ import {
   LaptopOutlined,
   RadarChartOutlined,
   RocketOutlined,
-  TeamOutlined
+  TeamOutlined,
+  ProfileOutlined
 } from '@ant-design/icons';
 import { Button, Layout, Menu, Space, Typography } from 'antd';
 import type { MenuProps } from 'antd';
@@ -20,38 +21,15 @@ function MainLayout() {
 
   const menuItems: MenuProps['items'] = useMemo(() => {
     const base: MenuProps['items'] = [
-      {
-        key: '/dashboard',
-        icon: <RadarChartOutlined />,
-        label: '运营驾驶舱'
-      },
-      {
-        key: '/fleet',
-        icon: <LaptopOutlined />,
-        label: '无人机中心'
-      },
-      {
-        key: '/missions',
-        icon: <RocketOutlined />,
-        label: '任务指挥'
-      },
-      {
-        key: '/monitoring',
-        icon: <RadarChartOutlined />,
-        label: '实时监测'
-      },
-      {
-        key: '/analytics',
-        icon: <BarChartOutlined />,
-        label: '数据分析'
-      }
+      { key: '/dashboard', icon: <RadarChartOutlined />, label: '运行总览' },
+      { key: '/fleet', icon: <LaptopOutlined />, label: '无人机管理' },
+      { key: '/missions', icon: <RocketOutlined />, label: '任务指挥' },
+      { key: '/monitoring', icon: <RadarChartOutlined />, label: '实时监控' },
+      { key: '/analytics', icon: <BarChartOutlined />, label: '数据分析' }
     ];
     if (currentUser?.role === 'superadmin') {
-      base.push({
-        key: '/personnel',
-        icon: <TeamOutlined />,
-        label: '人员管理'
-      });
+      base.push({ key: '/personnel', icon: <TeamOutlined />, label: '人员管理' });
+      base.push({ key: '/config-center', icon: <ProfileOutlined />, label: '任务与指标配置' });
     }
     return base;
   }, [currentUser?.role]);
@@ -99,7 +77,7 @@ function MainLayout() {
           }}
         >
           <Typography.Title level={4} style={{ margin: 0 }}>
-            无人机环境监测 · 原型
+            无人机环境监测 · 控制台
           </Typography.Title>
           {currentUser ? (
             <Space size="middle">

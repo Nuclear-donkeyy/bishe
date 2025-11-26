@@ -3,11 +3,9 @@ import {
   Badge,
   Button,
   Card,
-  Checkbox,
   Drawer,
   Form,
   Input,
-  InputNumber,
   List,
   Modal,
   Row,
@@ -20,14 +18,16 @@ import {
 } from 'antd';
 import { CircleMarker, MapContainer, Polyline, TileLayer, useMapEvents } from 'react-leaflet';
 import type { LatLngTuple, LeafletMouseEvent } from 'leaflet';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
-  fleetItems,
-  missionList as initialMissionList,
-  missionTypeDefinitions,
-  type Mission,
-  type MissionTypeKey
-} from '../data/mock';
+  fleetApi,
+  missionApi,
+  userApi,
+  type MissionDto,
+  type MissionTypeDefinition,
+  type UserRow,
+  type UavDevice
+} from '../services/api';
 
 const pointsEqual = (a: LatLngTuple, b: LatLngTuple) =>
   Math.abs(a[0] - b[0]) < 1e-6 && Math.abs(a[1] - b[1]) < 1e-6;
@@ -42,21 +42,59 @@ function RouteClickHandler({ onAddPoint }: { onAddPoint: (point: LatLngTuple) =>
 }
 
 function MissionCommander() {
-  const [missions, setMissions] = useState<Mission[]>(initialMissionList);
+  const [missions, setMissions] = useState<MissionDto[]>([]);
   const runningMissions = useMemo(
-    () => missions.filter(m => m.status === '执行中'),
+    () => missions.filter(m => m.status?.includes('执') || m.status === '执行中'),
     [missions]
   );
-  const [selectedMissionIds, setSelectedMissionIds] = useState<string[]>(() =>
-    runningMissions.map(m => m.id).slice(0, 2)
-  );
-  const [monitoringMission, setMonitoringMission] = useState<Mission | null>(null);
+  const [selectedMissionIds, setSelectedMissionIds] = useState<number[]>([]);
+  const [monitoringMission, setMonitoringMission] = useState<MissionDto | null>(null);
   const [createModalOpen, setCreateModalOpen] = useState(false);
-  const [form] = Form.useForm<
-    Omit<Mission, 'route' | 'color' | 'milestones' | 'metrics'> & { metrics: string[] }
-  >();
+  const [routeModalOpen, setRouteModalOpen] = useState(false);
+  const [form] = Form.useForm<{
+    name: string;
+    missionType: string;
+    pilotUsername: string;
+    priority: string;
+    assignedUavs?: string[];
+  }>();
   const [routeDraft, setRouteDraft] = useState<LatLngTuple[]>([]);
-  const selectedType = Form.useWatch('missionType', form);
+  const [missionTypes, setMissionTypes] = useState<MissionTypeDefinition[]>([]);
+  const [availableUavs, setAvailableUavs] = useState<UavDevice[]>([]);
+  const [users, setUsers] = useState<UserRow[]>([]);
+
+  useEffect(() => {
+    missionApi.list().then(setMissions).catch(() => setMissions([]));
+    missionApi.types().then(setMissionTypes).catch(() => setMissionTypes([]));
+    fleetApi.available().then(setAvailableUavs).catch(() => setAvailableUavs([]));
+    userApi.list().then(setUsers).catch(() => setUsers([]));
+  }, []);
+
+  useEffect(() => {
+    if (runningMissions.length && !selectedMissionIds.length) {
+      setSelectedMissionIds(runningMissions.map(m => m.id).slice(0, 2));
+    }
+  }, [runningMissions, selectedMissionIds.length]);
+
+  const availableUavOptions = useMemo(
+    () =>
+      availableUavs.map(item => ({
+        value: item.uavCode,
+        label: `${item.uavCode} · ${item.model} · ${item.pilotName ?? ''}`
+      })),
+    [availableUavs]
+  );
+
+  const pilotOptions = useMemo(() => {
+    const isOperator = (role?: string) => (role || '').toLowerCase() == 'operator';
+    const operators = users.filter(u => isOperator(u.role));
+    const base = operators.length ? operators : users;
+    return base.map(u => ({
+      value: u.username,
+      label: `${u.name} (${u.role})`
+    }));
+  }, [users]);
+
   const routeIsClosed =
     routeDraft.length > 2 && pointsEqual(routeDraft[0], routeDraft[routeDraft.length - 1]);
 
@@ -82,103 +120,80 @@ function MissionCommander() {
       return [...prev, prev[0]];
     });
   };
-  const availableUavs = useMemo(() => {
-    const busyUavIds = new Set<string>();
-    missions.forEach(mission => {
-      mission.assignedUavs?.forEach(id => busyUavIds.add(id));
-    });
-    const executingMissionNames = new Set(
-      missions.filter(m => m.status === '执行中').map(m => m.name)
-    );
-    return fleetItems.filter(item => {
-      if (item.status !== 'online') return false;
-      if (busyUavIds.has(item.id)) return false;
-      if (executingMissionNames.has(item.mission)) return false;
-      return true;
-    });
-  }, [missions]);
-  const availableUavOptions = useMemo(
-    () =>
-      availableUavs.map(item => ({
-        value: item.id,
-        label: `${item.id} · ${item.model} · ${item.pilot} · 剩余 ${item.battery}%`
-      })),
-    [availableUavs]
-  );
 
   const selectedMissions = useMemo(
     () => missions.filter(mission => selectedMissionIds.includes(mission.id)),
     [missions, selectedMissionIds]
   );
 
-  const handleLineClick = (mission: Mission) => () => {
+  const handleLineClick = (mission: MissionDto) => () => {
     setMonitoringMission(mission);
   };
 
-  const renderStatusTag = (status: Mission['status']) => {
-    if (status === '执行中') return <Tag color="green">执行中</Tag>;
-    if (status === '排队') return <Tag color="orange">排队</Tag>;
-    if (status === '异常中止') return <Tag color="red">异常中止</Tag>;
-    return <Tag color="blue">完成</Tag>;
+  const renderStatusTag = (status: MissionDto['status']) => {
+    if (status?.includes('执')) return <Tag color="green">{status}</Tag>;
+    if (status?.includes('队')) return <Tag color="orange">{status}</Tag>;
+    if (status?.includes('异常')) return <Tag color="red">{status}</Tag>;
+    return <Tag color="blue">{status}</Tag>;
   };
 
   const creationMapCenter: LatLngTuple = [31.25, 121.45];
 
   const handleCreateMission = () => {
     if (routeDraft.length < 3) {
-      message.error('请在地图上选择至少 3 个航点，并确保航线闭合');
+      message.error('请在航线规划中选择至少 3 个航点并闭合航线');
       return;
     }
     form
       .validateFields()
       .then(values => {
         const normalizedRoute = routeIsClosed ? routeDraft : [...routeDraft, routeDraft[0]];
-        const newMission: Mission = {
-          id: values.id || `M-${Date.now()}`,
-          name: values.name,
-          missionType: values.missionType,
-          pilot: values.pilot,
-          status: values.status,
-          priority: values.priority,
-          progress: values.progress ?? 0,
-          color: values.status === '执行中' ? '#f97316' : '#22c55e',
-          route: normalizedRoute,
-          milestones: values.status === '执行中' ? ['起飞 (模拟)', '航线执行中'] : ['排队中'],
-          metrics:
-            values.metrics && values.metrics.length > 0
-              ? values.metrics
-              : missionTypeDefinitions[values.missionType].metrics.map(metric => metric.label),
-          assignedUavs: values.assignedUavs && values.assignedUavs.length > 0 ? values.assignedUavs : undefined
-        };
-
-        setMissions(prev => [newMission, ...prev]);
-        setSelectedMissionIds(prev => [...prev, newMission.id]);
-        message.success('已新增任务');
-        setCreateModalOpen(false);
-        form.resetFields();
-        setRouteDraft([]);
+        return missionApi
+          .create({
+            name: values.name,
+            missionType: values.missionType,
+            pilotUsername: values.pilotUsername,
+            priority: values.priority,
+            route: normalizedRoute.map(p => [p[0], p[1]]),
+            milestones: [],
+            assignedUavs: values.assignedUavs
+          })
+          .then(created => {
+            setMissions(prev => [created, ...prev]);
+            setSelectedMissionIds(prev => [...prev, created.id]);
+            message.success('已新增任务');
+            setCreateModalOpen(false);
+            form.resetFields();
+            setRouteDraft([]);
+          })
+          .catch(err => message.error(err.message || '创建任务失败'));
       })
       .catch(() => undefined);
   };
 
   const layoutHeight = 'calc(100vh - 220px)';
 
-  const handleInterruptMission = (mission: Mission) => {
-    if (mission.status !== '执行中') return;
+  const handleInterruptMission = (mission: MissionDto) => {
+    if (!mission.missionCode) return;
     Modal.confirm({
-      title: `确认中断任务「${mission.name}」?`,
+      title: `确认中断任务「${mission.name}」？`,
       content: '任务将标记为异常中止，无法继续执行。',
       okText: '确认中断',
       okType: 'danger',
       cancelText: '取消',
       onOk: () => {
-        setMissions(prev =>
-          prev.map(item =>
-            item.id === mission.id ? { ...item, status: '异常中止' } : item
-          )
-        );
-        setSelectedMissionIds(prev => prev.filter(id => id !== mission.id));
-        message.success('任务已中断');
+        missionApi
+          .interrupt(mission.missionCode)
+          .then(() => {
+            setMissions(prev =>
+              prev.map(item =>
+                item.id == mission.id ? { ...item, status: '异常中止', progress: 0 } : item
+              )
+            );
+            setSelectedMissionIds(prev => prev.filter(id => id !== mission.id));
+            message.success('任务已中断');
+          })
+          .catch(() => message.error('中断失败'));
       }
     });
   };
@@ -189,7 +204,7 @@ function MissionCommander() {
         <Col xs={24} lg={7} style={{ height: layoutHeight }}>
           <Card
             title="任务列表"
-            style={{ height: '100%', overflow:'scroll' }}
+            style={{ height: '100%', overflow: 'scroll' }}
             extra={
               <Button icon={<PlusOutlined />} type="primary" onClick={() => setCreateModalOpen(true)}>
                 新增任务
@@ -219,12 +234,7 @@ function MissionCommander() {
                         <Space split={<span>·</span>} wrap>
                           <span>类型：{mission.missionType}</span>
                           <span>优先级：{mission.priority}</span>
-                          <span>进度：{mission.progress}%</span>
-                        </Space>
-                        <Space wrap style={{ marginTop: 4 }}>
-                          {mission.metrics.map(metric => (
-                            <Tag key={metric}>{metric}</Tag>
-                          ))}
+                          <span>进度：{mission.progress ?? 0}%</span>
                         </Space>
                         {mission.assignedUavs?.length ? (
                           <Typography.Text type="secondary">
@@ -253,7 +263,7 @@ function MissionCommander() {
                 <Select
                   mode="multiple"
                   value={selectedMissionIds}
-                  placeholder="勾选正在执行的任务航线"
+                  placeholder="选择正在执行的任务航线"
                   style={{ minWidth: 260 }}
                   onChange={setSelectedMissionIds}
                   options={runningMissions.map(m => ({
@@ -274,8 +284,8 @@ function MissionCommander() {
                 {selectedMissions.map(mission => (
                   <Polyline
                     key={mission.id}
-                    pathOptions={{ color: mission.color, weight: 4 }}
-                    positions={mission.route}
+                    pathOptions={{ color: mission.colorHex ?? '#2563eb', weight: 4 }}
+                    positions={mission.route as LatLngTuple[]}
                     eventHandlers={{
                       click: handleLineClick(mission),
                       mouseover: (e: LeafletMouseEvent) => {
@@ -302,25 +312,14 @@ function MissionCommander() {
         {monitoringMission ? (
           <Space direction="vertical" style={{ width: '100%' }}>
             <Badge status="processing" text={`状态：${monitoringMission.status}`} />
-            <Badge status="default" text={`责任人：${monitoringMission.pilot}`} />
+            <Badge status="default" text={`负责人：${monitoringMission.pilotName}`} />
             <Badge status="default" text={`优先级：${monitoringMission.priority}`} />
             <Badge status="default" text={`任务类型：${monitoringMission.missionType}`} />
-            {monitoringMission.status === '执行中' ? (
+            {monitoringMission.status?.includes('执') ? (
               <Button danger onClick={() => handleInterruptMission(monitoringMission)}>
                 中断任务
               </Button>
             ) : null}
-            <Typography.Title level={5}>进度</Typography.Title>
-            <Typography.Paragraph>
-              当前完成 {monitoringMission.progress}% ，剩余航点{' '}
-              {Math.max(0, 100 - monitoringMission.progress)}%。
-            </Typography.Paragraph>
-            <Typography.Title level={5}>关键指标</Typography.Title>
-            <Space wrap>
-              {monitoringMission.metrics.map(metric => (
-                <Tag key={metric}>{metric}</Tag>
-              ))}
-            </Space>
             <Typography.Title level={5}>执行无人机</Typography.Title>
             {monitoringMission.assignedUavs?.length ? (
               <Space wrap>
@@ -333,7 +332,7 @@ function MissionCommander() {
             )}
             <Typography.Title level={5}>里程碑</Typography.Title>
             <List
-              dataSource={monitoringMission.milestones}
+              dataSource={monitoringMission.milestones ?? []}
               renderItem={item => (
                 <List.Item>
                   <List.Item.Meta description={item} />
@@ -354,11 +353,13 @@ function MissionCommander() {
         }}
         onOk={handleCreateMission}
         okText="创建"
+        width={700}
       >
-        <Form form={form} layout="vertical" initialValues={{ missionType: '森林火情巡查' }}>
-          <Form.Item name="id" label="任务编号">
-            <Input placeholder="自动生成可留空" />
-          </Form.Item>
+        <Form
+          form={form}
+          layout="vertical"
+          initialValues={{ missionType: missionTypes[0]?.displayName, priority: '中' }}
+        >
           <Form.Item
             name="name"
             label="任务名称"
@@ -371,19 +372,20 @@ function MissionCommander() {
             label="任务类型"
             rules={[{ required: true, message: '请选择任务类型' }]}
           >
-            <Select<MissionTypeKey>
-              options={(Object.keys(missionTypeDefinitions) as MissionTypeKey[]).map(key => ({
-                value: key,
-                label: key
+            <Select
+              options={missionTypes.map(mt => ({
+                value: mt.displayName,
+                label: mt.displayName
               }))}
+              placeholder="选择任务类型"
             />
           </Form.Item>
           <Form.Item
-            name="pilot"
+            name="pilotUsername"
             label="责任人"
-            rules={[{ required: true, message: '请输入责任人' }]}
+            rules={[{ required: true, message: '请选择责任人' }]}
           >
-            <Input />
+            <Select options={pilotOptions} placeholder="选择责任人" />
           </Form.Item>
           <Form.Item
             name="priority"
@@ -398,68 +400,36 @@ function MissionCommander() {
               ]}
             />
           </Form.Item>
-          <Form.Item
-            name="status"
-            label="任务状态"
-            initialValue="排队"
-            rules={[{ required: true, message: '请选择状态' }]}
-          >
-            <Select
-              options={[
-                { value: '执行中', label: '执行中' },
-                { value: '排队', label: '排队' },
-                { value: '完成', label: '完成' }
-              ]}
-            />
-          </Form.Item>
-          <Form.Item
-            name="assignedUavs"
-            label="执行无人机"
-            rules={
-              availableUavOptions.length
-                ? [{ required: true, message: '请选择执行无人机' }]
-                : undefined
-            }
-            extra={
-              availableUavOptions.length
-                ? '仅显示在线且未被任务占用的无人机，可多选。'
-                : '暂无空闲无人机，请前往机队中心释放或接入无人机。'
-            }
-          >
+          <Form.Item name="assignedUavs" label="执行无人机" tooltip="仅显示在线且未占用的无人机">
             <Select
               mode="multiple"
-              placeholder={availableUavOptions.length ? '请选择可用无人机' : '暂无可用无人机'}
+              placeholder={availableUavOptions.length ? '请选择无人机' : '暂无可用无人机'}
               options={availableUavOptions}
               disabled={!availableUavOptions.length}
               maxTagCount="responsive"
             />
           </Form.Item>
-          <Form.Item name="progress" label="初始进度 (%)" initialValue={0}>
-            <InputNumber min={0} max={100} style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item name="metrics" label="关注指标">
-            <Checkbox.Group
-              options={
-                selectedType
-                  ? missionTypeDefinitions[selectedType as MissionTypeKey].metrics.map(metric => ({
-                      label: metric.label,
-                      value: metric.label
-                    }))
-                  : []
-              }
-            />
-            {!selectedType ? (
-              <Typography.Text type="secondary">请选择任务类型以加载指标</Typography.Text>
-            ) : null}
+          <Form.Item label="航线规划">
+            <Button onClick={() => setRouteModalOpen(true)}>打开航线规划</Button>
+            <Typography.Text type="secondary" style={{ marginLeft: 8 }}>
+              当前航点 {routeDraft.length} 个
+            </Typography.Text>
           </Form.Item>
         </Form>
-        <Typography.Title level={5} style={{ marginTop: 16 }}>
-          航线规划
-        </Typography.Title>
+      </Modal>
+
+      <Modal
+        title="航线规划"
+        open={routeModalOpen}
+        onCancel={() => setRouteModalOpen(false)}
+        onOk={() => setRouteModalOpen(false)}
+        okText="确认航线"
+        width={820}
+      >
         <Typography.Paragraph type="secondary" style={{ marginBottom: 8 }}>
-          点击地图添加航点，至少包含 3 个点并闭合。后端会校验航线闭合、起点距离和续航 80% 等规则。
+          点击地图添加航点，至少 3 个；可“闭合航线”使首尾相连。
         </Typography.Paragraph>
-        <div style={{ height: 260, borderRadius: 8, overflow: 'hidden', marginBottom: 12 }}>
+        <div style={{ height: 360, borderRadius: 8, overflow: 'hidden', marginBottom: 12 }}>
           <MapContainer
             center={creationMapCenter}
             zoom={11}

@@ -50,8 +50,8 @@ public class MissionController {
 
   @PatchMapping("/missions/{missionCode}")
   public ResponseEntity<MissionDto> updateProgress(
-      @PathVariable String missionCode, @RequestBody MissionCreateRequest request) {
-    if (request.progress() == null) {
+      @PathVariable String missionCode, @RequestBody ProgressPayload request) {
+    if (request == null || request.progress() == null) {
       return ResponseEntity.badRequest().build();
     }
     return ResponseEntity.ok(missionService.updateProgress(missionCode, request.progress()));
@@ -62,4 +62,6 @@ public class MissionController {
     missionService.interrupt(missionCode);
     return ResponseEntity.ok().build();
   }
+
+  public record ProgressPayload(Integer progress) {}
 }

@@ -1,25 +1,51 @@
 import { PlusOutlined } from '@ant-design/icons';
-import { Badge, Button, Card, Col, Form, Input, InputNumber, Modal, Row, Select, Space, Statistic, Table, Tag, message } from 'antd';
+import {
+  Badge,
+  Button,
+  Card,
+  Col,
+  Form,
+  Input,
+  Modal,
+  Row,
+  Select,
+  Space,
+  Statistic,
+  Table,
+  Tag,
+  message
+} from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { useMemo, useState } from 'react';
-import { fleetItems as initialFleet, type FleetItem } from '../data/mock';
+import { useEffect, useMemo, useState } from 'react';
+import { fleetApi, configApi, userApi, type FleetSummary, type UavDevice } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 
-const statusTag = (status: FleetItem['status']) => {
-  if (status === 'critical') {
+type RegisterForm = {
+  uavCode: string;
+  model: string;
+  pilotUsername: string;
+  sensors?: string[];
+  metadata?: string;
+};
+
+const statusTag = (status?: UavDevice['status']) => {
+  if (status === 'CRITICAL') {
     return <Tag color="red">离线</Tag>;
   }
-  if (status === 'warning') {
-    return <Tag color="orange">链路弱</Tag>;
+  if (status === 'WARNING') {
+    return <Tag color="orange">链路预警</Tag>;
+  }
+  if (status === 'PENDING_CONNECT') {
+    return <Tag color="default">待接入</Tag>;
   }
   return <Tag color="green">在线</Tag>;
 };
 
-const columns: ColumnsType<FleetItem> = [
+const columns: ColumnsType<UavDevice> = [
   {
     title: '无人机',
-    dataIndex: 'id',
-    key: 'id',
+    dataIndex: 'uavCode',
+    key: 'uavCode',
     render: (value, record) => (
       <Space direction="vertical" size={0}>
         <strong>{value}</strong>
@@ -28,26 +54,21 @@ const columns: ColumnsType<FleetItem> = [
     )
   },
   {
-    title: '任务 / 驾驶员',
-    key: 'mission',
-    render: (_, record) => (
-      <Space direction="vertical" size={0}>
-        <span>{record.mission}</span>
-        <span style={{ color: '#667085', fontSize: 12 }}>{record.pilot}</span>
-      </Space>
-    )
+    title: '飞行员',
+    dataIndex: 'pilotName',
+    key: 'pilotName'
+  },
+  {
+    title: '传感器',
+    dataIndex: 'sensors',
+    key: 'sensors',
+    render: value => (value ? value.split(',').join('、') : '-')
   },
   {
     title: '电量',
-    dataIndex: 'battery',
-    key: 'battery',
-    render: value => `${value}%`
-  },
-  {
-    title: '链路质量',
-    dataIndex: 'linkQuality',
-    key: 'linkQuality',
-    render: (value, record) => `${value} · RTT ${record.rtt}ms`
+    dataIndex: 'batteryPercent',
+    key: 'batteryPercent',
+    render: value => (value == null ? '-' : `${value}%`)
   },
   {
     title: '状态',
@@ -58,23 +79,34 @@ const columns: ColumnsType<FleetItem> = [
 ];
 
 function FleetCenter() {
-  const [fleet, setFleet] = useState<FleetItem[]>(initialFleet);
+  const [fleet, setFleet] = useState<UavDevice[]>([]);
+  const [summary, setSummary] = useState<FleetSummary | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
-  const [form] = Form.useForm<FleetItem>();
+  const [form] = Form.useForm<RegisterForm>();
   const { currentUser } = useAuth();
+  const [sensorOptions, setSensorOptions] = useState<{ value: string; label: string }[]>([]);
+  const [userOptions, setUserOptions] = useState<{ value: string; label: string }[]>([]);
+
+  const load = () => {
+    fleetApi.list({ page: 1, pageSize: 200 }).then(res => setFleet(res.items)).catch(() => setFleet([]));
+    fleetApi.summary().then(setSummary).catch(() => setSummary(null));
+    configApi.sensors.list().then((list: any) => setSensorOptions((list as any[] || []).map((s: any) => ({ value: s.sensorCode, label: `${s.sensorCode}·${s.name}` })))).catch(() => setSensorOptions([]));
+    userApi.list().then((users: any) => setUserOptions((users as any[] || []).map((u: any) => ({ value: u.username, label: `${u.name} (${u.username})` })))).catch(() => setUserOptions([]));
+  };
+
+  useEffect(() => {
+    load();
+  }, []);
 
   const visibleFleet = useMemo(() => {
     if (currentUser?.role === 'superadmin') return fleet;
-    return fleet.filter(item => item.pilot === currentUser?.name);
+    return fleet.filter(item => item.pilotName === currentUser?.name);
   }, [fleet, currentUser]);
 
   const connectionHealth = useMemo(
     () => ({
-      avgBattery:
-        visibleFleet.length > 0
-          ? Math.round(visibleFleet.reduce((sum, item) => sum + item.battery, 0) / visibleFleet.length)
-          : 0,
-      slowLinks: visibleFleet.filter(item => item.status !== 'online').length
+      avgBattery: 0,
+      slowLinks: visibleFleet.filter(item => item.status !== 'ONLINE').length
     }),
     [visibleFleet]
   );
@@ -83,16 +115,22 @@ function FleetCenter() {
     form
       .validateFields()
       .then(values => {
-        const newItem: FleetItem = {
-          ...values,
-          id: values.id || `UAV-${Math.floor(Math.random() * 900 + 100)}`,
-          status: values.status || 'online',
-          pilot: currentUser?.role === 'superadmin' ? values.pilot : currentUser?.name || values.pilot
+        const payload = {
+          uavCode: values.uavCode,
+          model: values.model,
+          pilotUsername: values.pilotUsername,
+          sensors: values.sensors,
+          metadata: values.metadata
         };
-        setFleet(prev => [newItem, ...prev]);
-        message.success(`已接入 ${newItem.id}`);
-        setModalOpen(false);
-        form.resetFields();
+        return fleetApi
+          .register(payload)
+          .then(newItem => {
+            setFleet(prev => [newItem, ...prev]);
+            message.success(`已接入 ${newItem.uavCode}`);
+            setModalOpen(false);
+            form.resetFields();
+          })
+          .catch(err => message.error(err.message || '接入失败'));
       })
       .catch(() => undefined);
   };
@@ -107,7 +145,7 @@ function FleetCenter() {
         </Col>
         <Col xs={24} md={6}>
           <Card>
-            <Statistic title="链路预警" value={connectionHealth.slowLinks} suffix="架" />
+            <Statistic title="链路异常" value={connectionHealth.slowLinks} suffix="架" />
           </Card>
         </Col>
         <Col xs={24} md={6}>
@@ -117,7 +155,7 @@ function FleetCenter() {
         </Col>
         <Col xs={24} md={6}>
           <Card>
-            <Statistic title="全部注册无人机" value={fleet.length} suffix="架" />
+            <Statistic title="注册无人机总数" value={fleet.length} suffix="架" />
           </Card>
         </Col>
       </Row>
@@ -146,7 +184,7 @@ function FleetCenter() {
             />
           </Col>
         </Row>
-        <Table<FleetItem>
+        <Table<UavDevice>
           rowKey="id"
           dataSource={visibleFleet}
           columns={columns}
@@ -160,19 +198,17 @@ function FleetCenter() {
         open={modalOpen}
         onCancel={() => setModalOpen(false)}
         onOk={handleSubmit}
-        okText="提交审批"
+        okText="提交接入"
         destroyOnClose
-        width={600}
+        width={680}
       >
-        <Form<FleetItem>
-          layout="vertical"
-          form={form}
-          initialValues={{
-            pilot: currentUser?.role === 'superadmin' ? undefined : currentUser?.name
-          }}
-        >
-          <Form.Item name="id" label="编号">
-            <Input placeholder="如 UAV-2024-021" />
+        <Form<RegisterForm> layout="vertical" form={form}>
+          <Form.Item
+            name="uavCode"
+            label="无人机编号"
+            rules={[{ required: true, message: '请输入编号' }]}
+          >
+            <Input placeholder="唯一编号，如 UAV-2024-021" />
           </Form.Item>
           <Form.Item
             name="model"
@@ -182,66 +218,29 @@ function FleetCenter() {
             <Input placeholder="多旋翼 / 固定翼" />
           </Form.Item>
           <Form.Item
-            name="mission"
-            label="任务"
-            rules={[{ required: true, message: '请输入任务名称' }]}
-          >
-            <Input placeholder="任务名称" />
-          </Form.Item>
-          {currentUser?.role === 'superadmin' ? (
-            <Form.Item
-              name="pilot"
-              label="责任人"
-              rules={[{ required: true, message: '请输入责任人' }]}
-            >
-              <Input placeholder="驾驶员/责任人" />
-            </Form.Item>
-          ) : (
-            <Form.Item label="责任人">
-              <Input value={currentUser?.name} disabled />
-            </Form.Item>
-          )}
-          <Row gutter={12}>
-            <Col span={12}>
-              <Form.Item
-                name="battery"
-                label="当前电量 (%)"
-                rules={[{ required: true, message: '请输入电量' }]}
-              >
-                <InputNumber min={0} max={100} style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item
-                name="rtt"
-                label="链路 RTT (ms)"
-                rules={[{ required: true, message: '请输入 RTT' }]}
-              >
-                <InputNumber min={0} style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-          </Row>
-          <Form.Item
-            name="linkQuality"
-            label="链路质量"
-            rules={[{ required: true, message: '请选择链路质量' }]}
+            name="pilotUsername"
+            label="责任人"
+            rules={[{ required: true, message: '请选择责任人' }]}
           >
             <Select
-              options={[
-                { value: '优', label: '优' },
-                { value: '良', label: '良' },
-                { value: '弱', label: '弱' }
-              ]}
+              options={userOptions}
+              placeholder="选择责任人（操作员/超级管理员）"
+              showSearch
+              filterOption={(input, option) =>
+                (option?.label as string).toLowerCase().includes(input.toLowerCase())
+              }
             />
           </Form.Item>
-          <Form.Item name="status" label="状态" initialValue="online">
+          <Form.Item name="sensors" label="传感器类型">
             <Select
-              options={[
-                { value: 'online', label: '在线' },
-                { value: 'warning', label: '链路弱' },
-                { value: 'critical', label: '离线' }
-              ]}
+              mode="multiple"
+              options={sensorOptions}
+              placeholder="选择传感器类型"
+              allowClear
             />
+          </Form.Item>
+          <Form.Item name="metadata" label="附加元数据 (JSON 字符串)">
+            <Input.TextArea rows={3} placeholder='例如 {"group":"森林火情"}' />
           </Form.Item>
         </Form>
       </Modal>

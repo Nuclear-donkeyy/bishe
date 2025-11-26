@@ -15,20 +15,4 @@ public class UavDevice extends BaseEntity {
   private String model;
   private String pilotName;
   private UavStatus status = UavStatus.PENDING_CONNECT;
-  private String linkQuality;
-  private Integer batteryPercent;
-  private BigDecimal rangeKm;
-  private Integer rttMs;
-  private BigDecimal locationLat;
-  private BigDecimal locationLng;
-  private BigDecimal locationAlt;
-  private Instant lastHeartbeatAt;
-  private Long currentMissionId;
-  private String connectionEndpoint;
-  private String connectionProtocol;
-  private String connectionSecret;
-  private String telemetryTopics;
-  private String mqttUsername;
-  private String mqttPassword;
-  private String metadata;
 }
