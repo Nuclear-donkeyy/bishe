@@ -2,6 +2,7 @@ package com.example.uavbackend.fleet;
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import com.example.uavbackend.fleet.UavStatus;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -14,13 +15,15 @@ public class TelemetryService {
   private static final String KEY_PREFIX = "uav:telemetry:";
   private final StringRedisTemplate redisTemplate;
   private final ObjectMapper objectMapper = new ObjectMapper();
+  // TTL in milliseconds
+  private static final long TTL_MS = 2000;
 
   public TelemetryService(StringRedisTemplate redisTemplate) {
     this.redisTemplate = redisTemplate;
   }
 
   public void upsertTelemetry(String uavCode, String payloadJson) {
-    redisTemplate.opsForValue().set(KEY_PREFIX + uavCode, payloadJson);
+    redisTemplate.opsForValue().set(KEY_PREFIX + uavCode, payloadJson, TTL_MS, TimeUnit.MILLISECONDS);
   }
 
   public Map<String, String> readAllTelemetry() {

@@ -46,7 +46,6 @@ export interface UavDevice {
   uavCode: string;
   model: string;
   pilotName: string;
-  status: UavStatus;
   sensors?: string[];
 }
 

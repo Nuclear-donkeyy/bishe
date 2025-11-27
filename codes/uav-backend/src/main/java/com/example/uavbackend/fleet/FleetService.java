@@ -46,19 +46,22 @@ public class FleetService {
   public org.springframework.data.domain.Page<UavDeviceDto> list(List<UavStatus> statuses, int page, int size) {
     LambdaQueryWrapper<UavDevice> wrapper = new LambdaQueryWrapper<>();
     Page<UavDevice> mpPage = deviceMapper.selectPage(Page.of(Math.max(page, 1), size), wrapper);
-    List<UavDeviceDto> mapped = mpPage.getRecords().stream().map(this::toDto).toList();
-    List<UavDeviceDto> filtered =
+    List<UavDevice> records = mpPage.getRecords();
+    List<UavDevice> filtered =
         (statuses == null || statuses.isEmpty())
-            ? mapped
-            : mapped.stream().filter(d -> statuses.contains(d.status())).toList();
-    return new PageImpl<>(filtered, PageRequest.of(Math.max(page - 1, 0), size), filtered.size());
+            ? records
+            : records.stream()
+                .filter(d -> statuses.contains(telemetryService.resolveStatus(d.getUavCode())))
+                .toList();
+    List<UavDeviceDto> mapped = filtered.stream().map(this::toDto).toList();
+    return new PageImpl<>(mapped, PageRequest.of(Math.max(page - 1, 0), size), mapped.size());
   }
 
   public List<UavDeviceDto> available(List<String> excludeMissionIds) {
     // excludeMissionIds currently unused
     return deviceMapper.selectList(null).stream()
+        .filter(device -> telemetryService.resolveStatus(device.getUavCode()) == UavStatus.ONLINE)
         .map(this::toDto)
-        .filter(dto -> dto.status() == UavStatus.ONLINE)
         .collect(Collectors.toList());
   }
 
@@ -89,14 +92,8 @@ public class FleetService {
 
   private UavDeviceDto toDto(UavDevice entity) {
     List<String> sensors = loadSensorCodes(entity.getId());
-    UavStatus liveStatus = telemetryService.resolveStatus(entity.getUavCode());
-    return new UavDeviceDto(
-        entity.getId(),
-        entity.getUavCode(),
-        entity.getModel(),
-        entity.getPilotName(),
-        liveStatus,
-        sensors);
+    // 前端状态仅从 WebSocket 遥测推送得出，这里不返回 status
+    return new UavDeviceDto(entity.getId(), entity.getUavCode(), entity.getModel(), entity.getPilotName(), sensors);
   }
 
   private void saveSensors(Long uavId, List<String> sensorCodes) {

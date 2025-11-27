@@ -34,6 +34,7 @@ type TelemetryMap = Record<
   {
     battery?: number;
     status?: string;
+    lastUpdated?: number;
     lat?: number;
     lng?: number;
     alt?: number;
@@ -81,7 +82,8 @@ function FleetCenter() {
           status,
           lat,
           lng,
-          alt
+          alt,
+          lastUpdated: Date.now()
         };
         setWsConnected(true);
         setTelemetryVersion(x => x + 1);
@@ -110,6 +112,25 @@ function FleetCenter() {
     const maxBattery = batteries.length ? Math.max(...batteries) : 0;
     return { online, linkIssues, maxBattery };
   }, [visibleFleet, telemetryVersion]);
+
+  // 定时检查在线遥测是否超时（5s未更新标记离线），不重置计时器以免频繁更新导致检测不到
+  useEffect(() => {
+    const timer = setInterval(() => {
+      let changed = false;
+      const now = Date.now();
+      Object.entries(telemetryRef.current).forEach(([code, t]) => {
+        if (t.status && t.status.toUpperCase() === 'OFFLINE') return;
+        if (t.lastUpdated && now - t.lastUpdated > 5000) {
+          delete telemetryRef.current[code];
+          changed = true;
+        }
+      });
+      if (changed) {
+        setTelemetryVersion(v => v + 1);
+      }
+    }, 5000);
+    return () => clearInterval(timer);
+  }, []);
 
   const columns: ColumnsType<UavDevice> = [
     {

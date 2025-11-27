@@ -20,6 +20,7 @@ public class TelemetryPushScheduler {
     }
     all.forEach(
         (uavCode, payload) -> {
+          // only push fresh keys (expired keys are filtered by readAllTelemetry)
           messagingTemplate.convertAndSend("/topic/uav-telemetry", payload);
           messagingTemplate.convertAndSend("/topic/uav-telemetry/" + uavCode, payload);
         });
