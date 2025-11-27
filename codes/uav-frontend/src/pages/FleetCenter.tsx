@@ -32,7 +32,7 @@ type RegisterForm = {
 type TelemetryMap = Record<
   string,
   {
-    batteryPercent?: number;
+    battery?: number;
     status?: string;
     lat?: number;
     lng?: number;
@@ -42,10 +42,13 @@ type TelemetryMap = Record<
 
 const statusTag = (status?: string) => {
   if (!status) return <Tag color="default">--</Tag>;
-  if (status.toUpperCase() === 'CRITICAL') return <Tag color="red">离线</Tag>;
-  if (status.toUpperCase() === 'WARNING') return <Tag color="orange">链路预警</Tag>;
-  if (status.toUpperCase() === 'PENDING_CONNECT') return <Tag color="default">待接入</Tag>;
-  return <Tag color="green">{status}</Tag>;
+  const upper = status.toUpperCase();
+  if (upper === 'OFFLINE') return <Tag color="default">离线</Tag>;
+  if (upper === 'CRITICAL') return <Tag color="red">异常</Tag>;
+  if (upper === 'WARNING') return <Tag color="orange">链路预警</Tag>;
+  if (upper === 'PENDING_CONNECT') return <Tag color="default">待接入</Tag>;
+  if (upper === 'ONLINE') return <Tag color="green">在线</Tag>;
+  return <Tag color="default">{status}</Tag>;
 };
 
 function FleetCenter() {
@@ -57,7 +60,7 @@ function FleetCenter() {
   const [sensorOptions, setSensorOptions] = useState<{ value: string; label: string }[]>([]);
   const [userOptions, setUserOptions] = useState<{ value: string; label: string }[]>([]);
   const telemetryRef = useRef<TelemetryMap>({});
-  const [, forceRender] = useState(0);
+  const [telemetryVersion, setTelemetryVersion] = useState(0);
   const [wsConnected, setWsConnected] = useState(false);
 
   const load = () => {
@@ -72,16 +75,16 @@ function FleetCenter() {
     const client = connectTelemetrySocket({
       onMessage: payload => {
         if (!payload || !payload.uavCode) return;
-        const { uavCode, batteryPercent, status, lat, lng, alt } = payload;
+        const { uavCode, battery, batteryPercent, status, lat, lng, alt } = payload;
         telemetryRef.current[uavCode] = {
-          batteryPercent,
+          battery: battery ?? batteryPercent,
           status,
           lat,
           lng,
           alt
         };
         setWsConnected(true);
-        forceRender(x => x + 1);
+        setTelemetryVersion(x => x + 1);
       },
       onConnect: () => setWsConnected(true),
       onDisconnect: () => setWsConnected(false)
@@ -94,16 +97,19 @@ function FleetCenter() {
     return fleet.filter(item => item.pilotName === currentUser?.name);
   }, [fleet, currentUser]);
 
-  const connectionHealth = useMemo(
-    () => ({
-      avgBattery: 0,
-      slowLinks: visibleFleet.filter(item => {
-        const t = telemetryRef.current[item.uavCode];
-        return t && t.status && t.status !== 'ONLINE';
-      }).length
-    }),
-    [visibleFleet]
-  );
+  const connectionHealth = useMemo(() => {
+    const online = visibleFleet.filter(item => telemetryRef.current[item.uavCode]).length;
+    const linkIssues = visibleFleet.filter(item => {
+      const t = telemetryRef.current[item.uavCode];
+      if (!t) return false; // offline
+      return t.battery == null || t.lat == null || t.lng == null;
+    }).length;
+    const batteries = visibleFleet
+      .map(item => telemetryRef.current[item.uavCode]?.battery)
+      .filter((v): v is number => v != null);
+    const maxBattery = batteries.length ? Math.max(...batteries) : 0;
+    return { online, linkIssues, maxBattery };
+  }, [visibleFleet, telemetryVersion]);
 
   const columns: ColumnsType<UavDevice> = [
     {
@@ -133,25 +139,33 @@ function FleetCenter() {
       key: 'battery',
       render: (_, record) => {
         const t = telemetryRef.current[record.uavCode];
-        if (!wsConnected) return '连接断开';
-        return t?.batteryPercent != null ? `${t.batteryPercent}%` : '--';
+        if (!wsConnected) return <Tag color="default">连接断开</Tag>;
+        if (!t) return <Tag color="default">离线</Tag>;
+        if (t.battery == null) return <Tag color="red">异常</Tag>;
+        return `${t.battery}%`;
       }
     },
     {
       title: '状态',
       key: 'status',
-      render: (_, record) =>
-        !wsConnected
-          ? <Tag color="default">连接断开</Tag>
-          : statusTag(telemetryRef.current[record.uavCode]?.status || record.status)
+      render: (_, record) => {
+        if (!wsConnected) {
+          return <Tag color="default">连接断开</Tag>;
+        }
+        const t = telemetryRef.current[record.uavCode];
+        const derived = !t ? 'OFFLINE' : (t.status || 'ONLINE');
+        return statusTag(derived);
+      }
     },
     {
       title: '经纬度',
       key: 'location',
       render: (_, record) => {
         const t = telemetryRef.current[record.uavCode];
-        if (!wsConnected) return '连接断开';
-        return t && t.lat != null && t.lng != null ? `${t.lat}, ${t.lng}` : '--';
+        if (!wsConnected) return <Tag color="default">连接断开</Tag>;
+        if (!t) return <Tag color="default">离线</Tag>;
+        if (t.lat == null || t.lng == null) return <Tag color="red">异常</Tag>;
+        return `${t.lat}, ${t.lng}`;
       }
     }
   ];
@@ -185,17 +199,17 @@ function FleetCenter() {
       <Row gutter={[16, 16]}>
         <Col xs={24} md={6}>
           <Card>
-            <Statistic title="可见无人机" value={visibleFleet.length} suffix="架" />
+            <Statistic title="在线无人机" value={connectionHealth.online} suffix="架" />
           </Card>
         </Col>
         <Col xs={24} md={6}>
           <Card>
-            <Statistic title="链路异常" value={connectionHealth.slowLinks} suffix="架" />
+            <Statistic title="链路异常" value={connectionHealth.linkIssues} suffix="架" />
           </Card>
         </Col>
         <Col xs={24} md={6}>
           <Card>
-            <Statistic title="平均电量" value={connectionHealth.avgBattery} suffix="%" />
+            <Statistic title="最高电量" value={connectionHealth.maxBattery} suffix="%" />
           </Card>
         </Col>
         <Col xs={24} md={6}>
@@ -217,14 +231,14 @@ function FleetCenter() {
           <Col xs={24} md={12}>
             <Badge
               status="processing"
-              text={`平均电量 ${connectionHealth.avgBattery}%`}
+              text={`最高电量 ${connectionHealth.maxBattery}%`}
               style={{ fontSize: 14 }}
             />
           </Col>
           <Col xs={24} md={12}>
             <Badge
-              status={connectionHealth.slowLinks ? 'warning' : 'success'}
-              text={`链路异常 ${connectionHealth.slowLinks} 架`}
+              status={connectionHealth.linkIssues ? 'warning' : 'success'}
+              text={`链路异常 ${connectionHealth.linkIssues} 架`}
               style={{ fontSize: 14 }}
             />
           </Col>
