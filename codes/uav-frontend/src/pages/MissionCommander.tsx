@@ -28,7 +28,8 @@ import {
   type MissionDto,
   type MissionTypeDefinition,
   type UserRow,
-  type UavDevice
+  type UavDevice,
+  type MissionStatusPayload
 } from '../services/api';
 
 const pointsEqual = (a: LatLngTuple, b: LatLngTuple) =>
@@ -45,10 +46,6 @@ function RouteClickHandler({ onAddPoint }: { onAddPoint: (point: LatLngTuple) =>
 
 function MissionCommander() {
   const [missions, setMissions] = useState<MissionDto[]>([]);
-  const runningMissions = useMemo(
-    () => missions.filter(m => m.status?.includes('执') || m.status === '执行中'),
-    [missions]
-  );
   const [selectedMissionIds, setSelectedMissionIds] = useState<number[]>([]);
   const [monitoringMission, setMonitoringMission] = useState<MissionDto | null>(null);
   const [createModalOpen, setCreateModalOpen] = useState(false);
@@ -62,7 +59,9 @@ function MissionCommander() {
   }>();
   const [routeDraft, setRouteDraft] = useState<LatLngTuple[]>([]);
   const routeMapRef = useRef<LeafletMap | null>(null);
-  const [mapCenter, setMapCenter] = useState<LatLngTuple>([31.25, 121.45]);
+  const mainMapRef = useRef<LeafletMap | null>(null);
+  const [mainMapCenter, setMainMapCenter] = useState<LatLngTuple>([31.25, 121.45]);
+  const [routeMapCenter, setRouteMapCenter] = useState<LatLngTuple>([31.25, 121.45]);
   const [recenterLat, setRecenterLat] = useState<string>('');
   const [recenterLng, setRecenterLng] = useState<string>('');
   const [missionTypes, setMissionTypes] = useState<MissionTypeDefinition[]>([]);
@@ -70,6 +69,7 @@ function MissionCommander() {
   const [users, setUsers] = useState<UserRow[]>([]);
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [nameFilter, setNameFilter] = useState<string>('');
+  const missionWsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
     missionApi.list().then(setMissions).catch(() => setMissions([]));
@@ -81,7 +81,8 @@ function MissionCommander() {
       navigator.geolocation.getCurrentPosition(
         pos => {
           const next: LatLngTuple = [pos.coords.latitude, pos.coords.longitude];
-          setMapCenter(next);
+          setMainMapCenter(next);
+          setRouteMapCenter(next);
           setRecenterLat(String(next[0]));
           setRecenterLng(String(next[1]));
           routeMapRef.current?.setView(next);
@@ -93,11 +94,66 @@ function MissionCommander() {
   }, []);
 
   useEffect(() => {
-    if (runningMissions.length && !selectedMissionIds.length) {
-      setSelectedMissionIds(runningMissions.map(m => m.id).slice(0, 2));
-    }
-  }, [runningMissions, selectedMissionIds.length]);
+    const WS_URL = 'ws://localhost:8080/ws/uav-telemetry';
+    const socket = new WebSocket(WS_URL);
+    missionWsRef.current = socket;
 
+    const sendFrame = (command: string, headers: Record<string, string>) => {
+      const lines = [command];
+      Object.entries(headers).forEach(([k, v]) => lines.push(`${k}:${v}`));
+      lines.push('', '');
+      socket.send(`${lines.join('\n')}\u0000`);
+    };
+
+    socket.onopen = () => {
+      sendFrame('CONNECT', { 'accept-version': '1.2', 'heart-beat': '10000,10000' });
+    };
+
+    socket.onmessage = event => {
+      const raw = String(event.data);
+      const frames = raw.split('\u0000').filter(Boolean);
+      frames.forEach(frame => {
+        const lines = frame.split('\n');
+        const command = lines.shift() || '';
+        const headers: Record<string, string> = {};
+        while (lines.length) {
+          const line = lines.shift();
+          if (line === '') break;
+          const [k, ...rest] = (line || '').split(':');
+          headers[k] = rest.join(':');
+        }
+        const body = lines.join('\n');
+        if (command === 'CONNECTED') {
+          sendFrame('SUBSCRIBE', { id: 'mission-updates', destination: '/topic/mission-updates', ack: 'auto' });
+        }
+        if (command === 'MESSAGE') {
+          try {
+            const payload = JSON.parse(body) as MissionStatusPayload;
+            setMissions(prev =>
+              prev.map(m =>
+                m.missionCode === payload.missionCode ? { ...m, status: payload.status } : m
+              )
+            );
+          } catch {
+            // ignore
+          }
+        }
+      });
+    };
+
+    return () => {
+      socket.close();
+    };
+  }, []);
+  const filteredMissions = useMemo(
+    () =>
+      missions.filter(m => {
+        const statusOk = statusFilter === 'ALL' || (m.status || '').toUpperCase() === statusFilter;
+        const nameOk = !nameFilter || (m.name || '').toLowerCase().includes(nameFilter.toLowerCase());
+        return statusOk && nameOk;
+      }),
+    [missions, statusFilter, nameFilter]
+  );
   const availableUavOptions = useMemo(
     () =>
       availableUavs.map(item => ({
@@ -155,30 +211,38 @@ function MissionCommander() {
     [missions, selectedMissionIds]
   );
 
+  useEffect(() => {
+    if (selectedMissions.length && selectedMissions[0].route?.length) {
+      const [lat, lng] = selectedMissions[0].route[0];
+      setMainMapCenter([lat, lng]);
+      mainMapRef.current?.setView([lat, lng]);
+    }
+  }, [selectedMissions]);
+
   const distinctStatuses = useMemo(
     () => Array.from(new Set(missions.map(m => m.status).filter(Boolean))),
     [missions]
   );
 
-  const filteredMissions = useMemo(
-    () =>
-      missions.filter(m => {
-        const statusOk = statusFilter === 'ALL' || m.status === statusFilter;
-        const nameOk = !nameFilter || (m.name || '').toLowerCase().includes(nameFilter.toLowerCase());
-        return statusOk && nameOk;
-      }),
-    [missions, statusFilter, nameFilter]
-  );
+  
 
   const handleLineClick = (mission: MissionDto) => () => {
     setMonitoringMission(mission);
   };
 
   const renderStatusTag = (status: MissionDto['status']) => {
-    if (status?.includes('执')) return <Tag color="green">{status}</Tag>;
-    if (status?.includes('队')) return <Tag color="orange">{status}</Tag>;
-    if (status?.includes('异常')) return <Tag color="red">{status}</Tag>;
-    return <Tag color="blue">{status}</Tag>;
+    switch ((status || '').toUpperCase()) {
+      case 'QUEUE':
+        return <Tag color="blue">排队</Tag>;
+      case 'RUNNING':
+        return <Tag color="green">运行中</Tag>;
+      case 'COMPLETED':
+        return <Tag color="default">已完成</Tag>;
+      case 'INTERRUPTED':
+        return <Tag color="red">已中断</Tag>;
+      default:
+        return <Tag color="default">{status || '??'}</Tag>;
+    }
   };
 
   const handleRecenter = () => {
@@ -189,7 +253,7 @@ function MissionCommander() {
       return;
     }
     const next: LatLngTuple = [lat, lng];
-    setMapCenter(next);
+    setRouteMapCenter(next);
     routeMapRef.current?.setView(next);
   };
 
@@ -231,7 +295,7 @@ function MissionCommander() {
     if (!mission.missionCode) return;
     Modal.confirm({
       title: `确认中断任务「${mission.name}」？`,
-      content: '任务将标记为异常中止，无法继续执行。',
+      content: '任务将标记为已中断，无法继续执行。',
       okText: '确认中断',
       okType: 'danger',
       cancelText: '取消',
@@ -241,7 +305,7 @@ function MissionCommander() {
           .then(() => {
             setMissions(prev =>
               prev.map(item =>
-                item.id == mission.id ? { ...item, status: '异常中止', progress: 0 } : item
+                item.id == mission.id ? { ...item, status: 'INTERRUPTED', progress: 0 } : item
               )
             );
             setSelectedMissionIds(prev => prev.filter(id => id !== mission.id));
@@ -272,7 +336,10 @@ function MissionCommander() {
                 onChange={setStatusFilter}
                 options={[
                   { label: '全部', value: 'ALL' },
-                  ...distinctStatuses.map(s => ({ label: s || '未知', value: s }))
+                  { label: '排队', value: 'QUEUE' },
+                  { label: '进行中', value: 'RUNNING' },
+                  { label: '已结束', value: 'COMPLETED' },
+                  { label: '已中断', value: 'INTERRUPTED' }
                 ]}
                 placeholder="按状态筛选"
               />
@@ -291,7 +358,10 @@ function MissionCommander() {
                 <List.Item
                   key={mission.id}
                   style={{ cursor: 'pointer', alignItems: 'flex-start' }}
-                  onClick={() => setMonitoringMission(mission)}
+                  onClick={() => {
+                    setMonitoringMission(mission);
+                    setSelectedMissionIds([mission.id]);
+                  }}
                   actions={[renderStatusTag(mission.status)]}
                 >
                   <List.Item.Meta
@@ -322,11 +392,18 @@ function MissionCommander() {
                 <Select
                   mode="multiple"
                   value={selectedMissionIds}
-                  placeholder="选择正在执行的任务航线"
+                  placeholder="选择任务航线"
                   style={{ minWidth: 260 }}
-                  onChange={setSelectedMissionIds}
-                  options={runningMissions.map(m => ({
-                    label: `${m.name}（${m.status}）`,
+                  onChange={ids => {
+                    setSelectedMissionIds(ids);
+                    const first = missions.find(m => m.id === ids[0]);
+                    if (first?.route?.length) {
+                      const [lat, lng] = first.route[0];
+                      setMainMapCenter([lat, lng]);
+                    }
+                  }}
+                  options={filteredMissions.map(m => ({
+                    label: `${m.name}（${m.status ?? '未知'}）`,
                     value: m.id
                   }))}
                   maxTagCount="responsive"
@@ -335,7 +412,8 @@ function MissionCommander() {
             </Space>
             <div style={{ marginTop: 16, flex: 1 }}>
               <MapContainer
-                center={mapCenter}
+                ref={mainMapRef}
+                center={mainMapCenter}
                 zoom={11}
                 style={{ height: '100%', borderRadius: 12, overflow: 'hidden' }}
               >
@@ -363,7 +441,7 @@ function MissionCommander() {
       </Row>
 
       <Drawer
-        title={monitoringMission ? `${monitoringMission.name} · 基础信息` : ''}
+        title={monitoringMission ? `${monitoringMission.name} - Details` : ''}
         open={!!monitoringMission}
         onClose={() => setMonitoringMission(null)}
         width={420}
@@ -371,19 +449,22 @@ function MissionCommander() {
         {monitoringMission ? (
           <Space direction="vertical" style={{ width: '100%' }}>
             <Descriptions column={1} bordered size="small">
-              <Descriptions.Item label="任务名称">{monitoringMission.name}</Descriptions.Item>
-              <Descriptions.Item label="任务状态">{monitoringMission.status}</Descriptions.Item>
-              <Descriptions.Item label="任务类型">{monitoringMission.missionType}</Descriptions.Item>
-              <Descriptions.Item label="负责人">{monitoringMission.pilotName}</Descriptions.Item>
-              <Descriptions.Item label="优先级">{monitoringMission.priority}</Descriptions.Item>
-              <Descriptions.Item label="任务编号">{monitoringMission.missionCode}</Descriptions.Item>
-              <Descriptions.Item label="执行无人机">
+              <Descriptions.Item label="Name">{monitoringMission.name}</Descriptions.Item>
+              <Descriptions.Item label="Status">{renderStatusTag(monitoringMission.status)}</Descriptions.Item>
+              <Descriptions.Item label="Type">{monitoringMission.missionType}</Descriptions.Item>
+              <Descriptions.Item label="Pilot">{monitoringMission.pilotName}</Descriptions.Item>
+              <Descriptions.Item label="Priority">{monitoringMission.priority}</Descriptions.Item>
+              <Descriptions.Item label="Code">{monitoringMission.missionCode}</Descriptions.Item>
+              <Descriptions.Item label="UAVs">
                 {monitoringMission.assignedUavs?.length
-                  ? monitoringMission.assignedUavs.join('、')
-                  : '未分配'}
+                  ? monitoringMission.assignedUavs.join(', ')
+                  : 'Not assigned'}
               </Descriptions.Item>
-              <Descriptions.Item label="进度">{monitoringMission.progress ?? 0}%</Descriptions.Item>
+              <Descriptions.Item label="Progress">{monitoringMission.progress ?? 0}%</Descriptions.Item>
             </Descriptions>
+            {['QUEUE', 'RUNNING'].includes((monitoringMission.status || '').toUpperCase()) ? (
+              <Button danger onClick={() => handleInterruptMission(monitoringMission)}>中断任务</Button>
+            ) : null}
           </Space>
         ) : null}
       </Drawer>
@@ -489,7 +570,7 @@ function MissionCommander() {
         </Space>
         <div style={{ height: 360, borderRadius: 8, overflow: 'hidden', marginBottom: 12 }}>
           <MapContainer
-            center={mapCenter}
+            center={routeMapCenter}
             zoom={11}
             style={{ height: '100%', width: '100%' }}
             attributionControl={false}

@@ -86,6 +86,11 @@ export interface MissionDto {
   assignedUavs?: string[];
 }
 
+export interface MissionStatusPayload {
+  missionCode: string;
+  status: string;
+}
+
 export const missionApi = {
   types: () => http.get<MissionTypeDefinition[]>('/mission-types').then(r => r.data),
   list: (params?: { status?: string[] }) => http.get<MissionDto[]>('/missions', { params }).then(r => r.data),

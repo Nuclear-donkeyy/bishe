@@ -81,7 +81,7 @@ public class FleetService {
     device.setUavCode(request.uavCode());
     device.setModel(request.model());
     device.setPilotName(pilot.getName());
-    device.setStatus(UavStatus.PENDING_CONNECT);
+    
     int rows = deviceMapper.insert(device);
     if (rows != 1) {
       throw new IllegalStateException("插入无人机记录失败");

@@ -19,12 +19,6 @@ public class GlobalExceptionHandler {
     return ResponseEntity.ok(ApiError.of(ex.getMessage(), "INVALID_STATE"));
   }
 
-  @ExceptionHandler(Exception.class)
-  public ResponseEntity<ApiError> handleGeneric(Exception ex) {
-    return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-        .body(ApiError.of("Internal server error", "INTERNAL_ERROR"));
-  }
-
   public record ApiError(boolean success, String message, String errorCode) {
     public static ApiError of(String message, String errorCode) {
       return new ApiError(false, message, errorCode);

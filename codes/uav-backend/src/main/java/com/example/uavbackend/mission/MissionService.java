@@ -1,15 +1,16 @@
 package com.example.uavbackend.mission;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.example.uavbackend.fleet.UavDevice;
-import com.example.uavbackend.fleet.UavDeviceMapper;
-import com.example.uavbackend.fleet.UavStatus;
-import com.example.uavbackend.mission.dto.MissionCreateRequest;
-import com.example.uavbackend.mission.dto.MissionDto;
 import com.example.uavbackend.auth.User;
 import com.example.uavbackend.auth.UserMapper;
 import com.example.uavbackend.auth.UserRole;
 import com.example.uavbackend.auth.UserStatus;
+import com.example.uavbackend.fleet.UavDevice;
+import com.example.uavbackend.fleet.UavDeviceMapper;
+import com.example.uavbackend.mission.MissionStatus;
+import com.example.uavbackend.mission.MissionStatusPayload;
+import com.example.uavbackend.mission.dto.MissionCreateRequest;
+import com.example.uavbackend.mission.dto.MissionDto;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -18,6 +19,7 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -29,6 +31,8 @@ public class MissionService {
   private final MissionUavAssignmentMapper assignmentMapper;
   private final UavDeviceMapper uavDeviceMapper;
   private final UserMapper userMapper;
+  private final MissionQueueService missionQueueService;
+  private final SimpMessagingTemplate messagingTemplate;
 
   public List<MissionDto> list(List<String> statuses) {
     LambdaQueryWrapper<Mission> wrapper = new LambdaQueryWrapper<>();
@@ -57,13 +61,17 @@ public class MissionService {
     mission.setPriority(request.priority());
     mission.setProgress(0);
     List<UavDevice> assignedDevices = findAssignedDevices(request.assignedUavs());
-    mission.setStatus(determineStatus(assignedDevices));
-    mission.setColorHex(mission.getStatus().equals("执行中") ? "#f97316" : "#22c55e");
+    mission.setStatus(MissionStatus.QUEUE.name());
+    mission.setColorHex("#22c55e");
     mission.setMetrics(null);
     mission.setMilestones(JsonUtils.toJson(request.milestones()));
     missionMapper.insert(mission);
     saveRoutePoints(mission.getId(), request.route());
     saveAssignments(mission.getId(), assignedDevices);
+    if (!assignedDevices.isEmpty()) {
+      missionQueueService.enqueue(mission, request.route(), assignedDevices, request.priority());
+    }
+    pushStatusUpdate(mission);
     return toDtoWithRoute(mission);
   }
 
@@ -86,8 +94,10 @@ public class MissionService {
         missionMapper.selectOne(
             new LambdaQueryWrapper<Mission>().eq(Mission::getMissionCode, missionCode));
     if (mission != null) {
-      mission.setStatus("异常中止");
+      mission.setStatus(MissionStatus.INTERRUPTED.name());
       missionMapper.updateById(mission);
+      missionQueueService.removeFromQueue(mission.getMissionCode());
+      pushStatusUpdate(mission);
     }
   }
 
@@ -146,14 +156,6 @@ public class MissionService {
         new LambdaQueryWrapper<UavDevice>().in(UavDevice::getUavCode, assignedUavCodes));
   }
 
-  private String determineStatus(List<UavDevice> devices) {
-    if (devices.isEmpty()) {
-      return "排队";
-    }
-    boolean allOnline = devices.stream().allMatch(d -> d.getStatus() == UavStatus.ONLINE);
-    return allOnline ? "执行中" : "排队";
-  }
-
   private void saveAssignments(Long missionId, List<UavDevice> devices) {
     if (devices.isEmpty()) {
       return;
@@ -195,5 +197,34 @@ public class MissionService {
       throw new IllegalArgumentException("责任人角色无效");
     }
     return pilot;
+  }
+
+  public void markRunning(String missionCode) {
+    Mission mission =
+        missionMapper.selectOne(
+            new LambdaQueryWrapper<Mission>().eq(Mission::getMissionCode, missionCode));
+    if (mission != null && !MissionStatus.RUNNING.name().equals(mission.getStatus())) {
+      mission.setStatus(MissionStatus.RUNNING.name());
+      missionMapper.updateById(mission);
+      pushStatusUpdate(mission);
+    }
+  }
+
+  public void markCompleted(String missionCode) {
+    Mission mission =
+        missionMapper.selectOne(
+            new LambdaQueryWrapper<Mission>().eq(Mission::getMissionCode, missionCode));
+    if (mission != null && !MissionStatus.COMPLETED.name().equals(mission.getStatus())) {
+      mission.setStatus(MissionStatus.COMPLETED.name());
+      mission.setProgress(100);
+      missionMapper.updateById(mission);
+      pushStatusUpdate(mission);
+    }
+  }
+
+  private void pushStatusUpdate(Mission mission) {
+    messagingTemplate.convertAndSend(
+        "/topic/mission-updates",
+        new MissionStatusPayload(mission.getMissionCode(), mission.getStatus()));
   }
 }
