@@ -3,6 +3,7 @@ import {
   Badge,
   Button,
   Card,
+  Descriptions,
   Drawer,
   Form,
   Input,
@@ -17,8 +18,9 @@ import {
   message
 } from 'antd';
 import { CircleMarker, MapContainer, Polyline, TileLayer, useMapEvents } from 'react-leaflet';
-import type { LatLngTuple, LeafletMouseEvent } from 'leaflet';
-import { useEffect, useMemo, useState } from 'react';
+import type { LatLngTuple, LeafletMouseEvent, Map as LeafletMap } from 'leaflet';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import 'leaflet/dist/leaflet.css';
 import {
   fleetApi,
   missionApi,
@@ -56,18 +58,38 @@ function MissionCommander() {
     missionType: string;
     pilotUsername: string;
     priority: string;
-    assignedUavs?: string[];
+    assignedUav?: string;
   }>();
   const [routeDraft, setRouteDraft] = useState<LatLngTuple[]>([]);
+  const routeMapRef = useRef<LeafletMap | null>(null);
+  const [mapCenter, setMapCenter] = useState<LatLngTuple>([31.25, 121.45]);
+  const [recenterLat, setRecenterLat] = useState<string>('');
+  const [recenterLng, setRecenterLng] = useState<string>('');
   const [missionTypes, setMissionTypes] = useState<MissionTypeDefinition[]>([]);
   const [availableUavs, setAvailableUavs] = useState<UavDevice[]>([]);
   const [users, setUsers] = useState<UserRow[]>([]);
+  const [statusFilter, setStatusFilter] = useState<string>('ALL');
+  const [nameFilter, setNameFilter] = useState<string>('');
 
   useEffect(() => {
     missionApi.list().then(setMissions).catch(() => setMissions([]));
     missionApi.types().then(setMissionTypes).catch(() => setMissionTypes([]));
     fleetApi.available().then(setAvailableUavs).catch(() => setAvailableUavs([]));
     userApi.list().then(setUsers).catch(() => setUsers([]));
+    // 获取浏览器当前位置作为默认中心
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        pos => {
+          const next: LatLngTuple = [pos.coords.latitude, pos.coords.longitude];
+          setMapCenter(next);
+          setRecenterLat(String(next[0]));
+          setRecenterLng(String(next[1]));
+          routeMapRef.current?.setView(next);
+        },
+        () => void 0,
+        { enableHighAccuracy: true, timeout: 3000 }
+      );
+    }
   }, []);
 
   useEffect(() => {
@@ -121,9 +143,31 @@ function MissionCommander() {
     });
   };
 
+  // ensure Leaflet map resizes correctly when modal opens
+  useEffect(() => {
+    if (routeModalOpen && routeMapRef.current) {
+      setTimeout(() => routeMapRef.current?.invalidateSize(), 100);
+    }
+  }, [routeModalOpen]);
+
   const selectedMissions = useMemo(
     () => missions.filter(mission => selectedMissionIds.includes(mission.id)),
     [missions, selectedMissionIds]
+  );
+
+  const distinctStatuses = useMemo(
+    () => Array.from(new Set(missions.map(m => m.status).filter(Boolean))),
+    [missions]
+  );
+
+  const filteredMissions = useMemo(
+    () =>
+      missions.filter(m => {
+        const statusOk = statusFilter === 'ALL' || m.status === statusFilter;
+        const nameOk = !nameFilter || (m.name || '').toLowerCase().includes(nameFilter.toLowerCase());
+        return statusOk && nameOk;
+      }),
+    [missions, statusFilter, nameFilter]
   );
 
   const handleLineClick = (mission: MissionDto) => () => {
@@ -137,7 +181,17 @@ function MissionCommander() {
     return <Tag color="blue">{status}</Tag>;
   };
 
-  const creationMapCenter: LatLngTuple = [31.25, 121.45];
+  const handleRecenter = () => {
+    const lat = parseFloat(recenterLat);
+    const lng = parseFloat(recenterLng);
+    if (Number.isNaN(lat) || Number.isNaN(lng)) {
+      message.warning('请输入有效的经纬度');
+      return;
+    }
+    const next: LatLngTuple = [lat, lng];
+    setMapCenter(next);
+    routeMapRef.current?.setView(next);
+  };
 
   const handleCreateMission = () => {
     if (routeDraft.length < 3) {
@@ -156,7 +210,7 @@ function MissionCommander() {
             priority: values.priority,
             route: normalizedRoute.map(p => [p[0], p[1]]),
             milestones: [],
-            assignedUavs: values.assignedUavs
+            assignedUavs: values.assignedUav ? [values.assignedUav] : []
           })
           .then(created => {
             setMissions(prev => [created, ...prev]);
@@ -211,9 +265,28 @@ function MissionCommander() {
               </Button>
             }
           >
+            <Space direction="horizontal" wrap style={{ width: '100%', marginBottom: 12 }}>
+              <Select
+                style={{ minWidth: 180 }}
+                value={statusFilter}
+                onChange={setStatusFilter}
+                options={[
+                  { label: '全部', value: 'ALL' },
+                  ...distinctStatuses.map(s => ({ label: s || '未知', value: s }))
+                ]}
+                placeholder="按状态筛选"
+              />
+              <Input
+                placeholder="按名称筛选"
+                value={nameFilter}
+                onChange={e => setNameFilter(e.target.value)}
+                allowClear
+                style={{ minWidth: 220 }}
+              />
+            </Space>
             <List
               style={{ flex: 1, overflow: 'auto' }}
-              dataSource={missions}
+              dataSource={filteredMissions}
               renderItem={mission => (
                 <List.Item
                   key={mission.id}
@@ -227,20 +300,6 @@ function MissionCommander() {
                       <Space>
                         <EnvironmentOutlined />
                         {mission.name}
-                      </Space>
-                    }
-                    description={
-                      <Space direction="vertical" size={0}>
-                        <Space split={<span>·</span>} wrap>
-                          <span>类型：{mission.missionType}</span>
-                          <span>优先级：{mission.priority}</span>
-                          <span>进度：{mission.progress ?? 0}%</span>
-                        </Space>
-                        {mission.assignedUavs?.length ? (
-                          <Typography.Text type="secondary">
-                            执行无人机：{mission.assignedUavs.join('、')}
-                          </Typography.Text>
-                        ) : null}
                       </Space>
                     }
                   />
@@ -276,7 +335,7 @@ function MissionCommander() {
             </Space>
             <div style={{ marginTop: 16, flex: 1 }}>
               <MapContainer
-                center={[31.25, 121.45]}
+                center={mapCenter}
                 zoom={11}
                 style={{ height: '100%', borderRadius: 12, overflow: 'hidden' }}
               >
@@ -304,41 +363,27 @@ function MissionCommander() {
       </Row>
 
       <Drawer
-        title={monitoringMission ? `${monitoringMission.name} · 执行监控` : ''}
+        title={monitoringMission ? `${monitoringMission.name} · 基础信息` : ''}
         open={!!monitoringMission}
         onClose={() => setMonitoringMission(null)}
         width={420}
       >
         {monitoringMission ? (
           <Space direction="vertical" style={{ width: '100%' }}>
-            <Badge status="processing" text={`状态：${monitoringMission.status}`} />
-            <Badge status="default" text={`负责人：${monitoringMission.pilotName}`} />
-            <Badge status="default" text={`优先级：${monitoringMission.priority}`} />
-            <Badge status="default" text={`任务类型：${monitoringMission.missionType}`} />
-            {monitoringMission.status?.includes('执') ? (
-              <Button danger onClick={() => handleInterruptMission(monitoringMission)}>
-                中断任务
-              </Button>
-            ) : null}
-            <Typography.Title level={5}>执行无人机</Typography.Title>
-            {monitoringMission.assignedUavs?.length ? (
-              <Space wrap>
-                {monitoringMission.assignedUavs.map(uavId => (
-                  <Tag key={uavId}>{uavId}</Tag>
-                ))}
-              </Space>
-            ) : (
-              <Typography.Text type="secondary">尚未分配无人机</Typography.Text>
-            )}
-            <Typography.Title level={5}>里程碑</Typography.Title>
-            <List
-              dataSource={monitoringMission.milestones ?? []}
-              renderItem={item => (
-                <List.Item>
-                  <List.Item.Meta description={item} />
-                </List.Item>
-              )}
-            />
+            <Descriptions column={1} bordered size="small">
+              <Descriptions.Item label="任务名称">{monitoringMission.name}</Descriptions.Item>
+              <Descriptions.Item label="任务状态">{monitoringMission.status}</Descriptions.Item>
+              <Descriptions.Item label="任务类型">{monitoringMission.missionType}</Descriptions.Item>
+              <Descriptions.Item label="负责人">{monitoringMission.pilotName}</Descriptions.Item>
+              <Descriptions.Item label="优先级">{monitoringMission.priority}</Descriptions.Item>
+              <Descriptions.Item label="任务编号">{monitoringMission.missionCode}</Descriptions.Item>
+              <Descriptions.Item label="执行无人机">
+                {monitoringMission.assignedUavs?.length
+                  ? monitoringMission.assignedUavs.join('、')
+                  : '未分配'}
+              </Descriptions.Item>
+              <Descriptions.Item label="进度">{monitoringMission.progress ?? 0}%</Descriptions.Item>
+            </Descriptions>
           </Space>
         ) : null}
       </Drawer>
@@ -400,13 +445,11 @@ function MissionCommander() {
               ]}
             />
           </Form.Item>
-          <Form.Item name="assignedUavs" label="执行无人机" tooltip="仅显示在线且未占用的无人机">
+          <Form.Item name="assignedUav" label="执行无人机" tooltip="仅显示在线且未占用的无人机">
             <Select
-              mode="multiple"
               placeholder={availableUavOptions.length ? '请选择无人机' : '暂无可用无人机'}
               options={availableUavOptions}
               disabled={!availableUavOptions.length}
-              maxTagCount="responsive"
             />
           </Form.Item>
           <Form.Item label="航线规划">
@@ -429,12 +472,32 @@ function MissionCommander() {
         <Typography.Paragraph type="secondary" style={{ marginBottom: 8 }}>
           点击地图添加航点，至少 3 个；可“闭合航线”使首尾相连。
         </Typography.Paragraph>
+        <Space style={{ marginBottom: 12 }} wrap>
+          <Input
+            style={{ width: 160 }}
+            placeholder="纬度"
+            value={recenterLat}
+            onChange={e => setRecenterLat(e.target.value)}
+          />
+          <Input
+            style={{ width: 160 }}
+            placeholder="经度"
+            value={recenterLng}
+            onChange={e => setRecenterLng(e.target.value)}
+          />
+          <Button onClick={handleRecenter}>定位</Button>
+        </Space>
         <div style={{ height: 360, borderRadius: 8, overflow: 'hidden', marginBottom: 12 }}>
           <MapContainer
-            center={creationMapCenter}
+            center={mapCenter}
             zoom={11}
             style={{ height: '100%', width: '100%' }}
             attributionControl={false}
+            whenReady={() => {
+              setTimeout(() => routeMapRef.current?.invalidateSize(), 50);
+            }}
+            ref={routeMapRef as any}
+            key={routeModalOpen ? 'open' : 'closed'}
           >
             <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
             <RouteClickHandler onAddPoint={handleRoutePointAdd} />
