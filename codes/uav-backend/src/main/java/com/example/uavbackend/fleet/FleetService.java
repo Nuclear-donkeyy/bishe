@@ -26,36 +26,50 @@ public class FleetService {
   private final UserMapper userMapper;
   private final UavSensorMapper uavSensorMapper;
   private final SensorTypeMapper sensorTypeMapper;
+  private final TelemetryService telemetryService;
 
   public FleetSummaryDto summary() {
     List<UavDevice> all = deviceMapper.selectList(null);
-    long online = all.stream().filter(d -> d.getStatus() == UavStatus.ONLINE).count();
+    long online =
+        all.stream()
+            .map(d -> telemetryService.resolveStatus(d.getUavCode()))
+            .filter(status -> status == UavStatus.ONLINE)
+            .count();
     long warning =
-        all.stream().filter(d -> d.getStatus() == UavStatus.WARNING || d.getStatus() == UavStatus.CRITICAL).count();
+        all.stream()
+            .map(d -> telemetryService.resolveStatus(d.getUavCode()))
+            .filter(status -> status == UavStatus.WARNING || status == UavStatus.CRITICAL)
+            .count();
     return new FleetSummaryDto(online, warning, 0L, 0);
   }
 
   public org.springframework.data.domain.Page<UavDeviceDto> list(List<UavStatus> statuses, int page, int size) {
     LambdaQueryWrapper<UavDevice> wrapper = new LambdaQueryWrapper<>();
-    if (statuses != null && !statuses.isEmpty()) {
-      wrapper.in(UavDevice::getStatus, statuses);
-    }
     Page<UavDevice> mpPage = deviceMapper.selectPage(Page.of(Math.max(page, 1), size), wrapper);
-    List<UavDeviceDto> content = mpPage.getRecords().stream().map(this::toDto).toList();
-    return new PageImpl<>(content, PageRequest.of(Math.max(page - 1, 0), size), mpPage.getTotal());
+    List<UavDevice> records = mpPage.getRecords();
+    List<UavDevice> filtered =
+        (statuses == null || statuses.isEmpty())
+            ? records
+            : records.stream()
+                .filter(d -> statuses.contains(telemetryService.resolveStatus(d.getUavCode())))
+                .toList();
+    List<UavDeviceDto> mapped = filtered.stream().map(this::toDto).toList();
+    return new PageImpl<>(mapped, PageRequest.of(Math.max(page - 1, 0), size), mapped.size());
   }
 
   public List<UavDeviceDto> available(List<String> excludeMissionIds) {
-    // excludeMissionIds currently unused; filter by status only
-    return deviceMapper
-        .selectList(new LambdaQueryWrapper<UavDevice>().eq(UavDevice::getStatus, UavStatus.ONLINE))
-        .stream()
+    // excludeMissionIds currently unused
+    return deviceMapper.selectList(null).stream()
+        .filter(device -> telemetryService.resolveStatus(device.getUavCode()) == UavStatus.ONLINE)
         .map(this::toDto)
         .collect(Collectors.toList());
   }
 
   @Transactional
   public UavDeviceDto register(UavRequest request) {
+    if (deviceMapper.exists(new LambdaQueryWrapper<UavDevice>().eq(UavDevice::getUavCode, request.uavCode()))) {
+      throw new IllegalArgumentException("无人机编号已存在");
+    }
     User pilot =
         Optional.ofNullable(
                 userMapper.selectOne(
@@ -68,29 +82,18 @@ public class FleetService {
     device.setModel(request.model());
     device.setPilotName(pilot.getName());
     device.setStatus(UavStatus.PENDING_CONNECT);
-    deviceMapper.insert(device);
+    int rows = deviceMapper.insert(device);
+    if (rows != 1) {
+      throw new IllegalStateException("插入无人机记录失败");
+    }
     saveSensors(device.getId(), request.sensors());
     return toDto(device);
   }
 
-  public void applyTelemetry(String uavCode, UavTelemetry telemetry) {
-    UavDevice device =
-        deviceMapper.selectOne(new LambdaQueryWrapper<UavDevice>().eq(UavDevice::getUavCode, uavCode));
-    if (device != null) {
-      device.setStatus(UavStatus.ONLINE);
-      deviceMapper.updateById(device);
-    }
-  }
-
   private UavDeviceDto toDto(UavDevice entity) {
     List<String> sensors = loadSensorCodes(entity.getId());
-    return new UavDeviceDto(
-        entity.getId(),
-        entity.getUavCode(),
-        entity.getModel(),
-        entity.getPilotName(),
-        entity.getStatus(),
-        sensors);
+    // 前端状态仅从 WebSocket 遥测推送得出，这里不返回 status
+    return new UavDeviceDto(entity.getId(), entity.getUavCode(), entity.getModel(), entity.getPilotName(), sensors);
   }
 
   private void saveSensors(Long uavId, List<String> sensorCodes) {

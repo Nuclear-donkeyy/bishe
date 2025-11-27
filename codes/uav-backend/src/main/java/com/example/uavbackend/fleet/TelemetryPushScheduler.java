@@ -12,7 +12,7 @@ public class TelemetryPushScheduler {
   private final TelemetryService telemetryService;
   private final SimpMessagingTemplate messagingTemplate;
 
-  @Scheduled(fixedDelay = 100)
+  @Scheduled(fixedDelay = 500)
   public void pushTelemetry() {
     Map<String, String> all = telemetryService.readAllTelemetry();
     if (all.isEmpty()) {
@@ -20,6 +20,7 @@ public class TelemetryPushScheduler {
     }
     all.forEach(
         (uavCode, payload) -> {
+          // only push fresh keys (expired keys are filtered by readAllTelemetry)
           messagingTemplate.convertAndSend("/topic/uav-telemetry", payload);
           messagingTemplate.convertAndSend("/topic/uav-telemetry/" + uavCode, payload);
         });

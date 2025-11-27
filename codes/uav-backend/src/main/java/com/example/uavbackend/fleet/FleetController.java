@@ -28,15 +28,15 @@ public class FleetController {
 
   @GetMapping
   public Page<UavDeviceDto> list(
-      @RequestParam(value = "status", required = false) List<UavStatus> statuses,
-      @RequestParam(defaultValue = "1") int page,
-      @RequestParam(defaultValue = "20") int pageSize) {
+      @RequestParam(name = "status", required = false) List<UavStatus> statuses,
+      @RequestParam(name = "page", defaultValue = "1") int page,
+      @RequestParam(name = "pageSize", defaultValue = "20") int pageSize) {
     return fleetService.list(statuses, page, pageSize);
   }
 
   @GetMapping("/available")
   public List<UavDeviceDto> available(
-      @RequestParam(value = "excludeMissionIds", required = false) List<String> excludeMissionIds) {
+      @RequestParam(name = "excludeMissionIds", required = false) List<String> excludeMissionIds) {
     return fleetService.available(excludeMissionIds);
   }
 

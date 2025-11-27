@@ -39,14 +39,13 @@ export interface FleetSummary {
   avgRtt: number;
 }
 
-export type UavStatus = 'ONLINE' | 'WARNING' | 'CRITICAL' | 'PENDING_CONNECT';
+export type UavStatus = 'ONLINE' | 'OFFLINE' | 'WARNING' | 'CRITICAL' | 'PENDING_CONNECT';
 
 export interface UavDevice {
   id: number;
   uavCode: string;
   model: string;
   pilotName: string;
-  status: UavStatus;
   sensors?: string[];
 }
 
