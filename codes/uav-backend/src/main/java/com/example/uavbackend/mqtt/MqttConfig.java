@@ -96,8 +96,7 @@ public class MqttConfig {
       }
       try {
         telemetryService.upsertTelemetry(uavCode, payload);
-        log.info("MQTT telemetry received, topic={}, uavCode={}, cachedToRedis=true", topic, uavCode);
-        // Telemetry is only cached to Redis for real-time push; do not touch DB here.
+//        log.info("MQTT telemetry received, topic={}, uavCode={}, cachedToRedis=true", topic, uavCode);
       } catch (Exception e) {
         log.error("MQTT telemetry handling failed, topic={}, uavCode={}, payload={}", topic, uavCode, payload, e);
       }

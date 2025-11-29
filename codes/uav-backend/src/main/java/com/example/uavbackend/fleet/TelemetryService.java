@@ -23,22 +23,34 @@ public class TelemetryService {
   }
 
   public void upsertTelemetry(String uavCode, String payloadJson) {
-    redisTemplate.opsForValue().set(KEY_PREFIX + uavCode, payloadJson, TTL_MS, TimeUnit.MILLISECONDS);
+    try {
+      redisTemplate.opsForValue().set(KEY_PREFIX + uavCode, payloadJson, TTL_MS, TimeUnit.MILLISECONDS);
+    } catch (Exception e) {
+      // 忽略 Redis 异常，避免接口 500
+    }
   }
 
   public Map<String, String> readAllTelemetry() {
-    var keys = redisTemplate.keys(KEY_PREFIX + "*");
-    if (keys == null || keys.isEmpty()) {
+    try {
+      var keys = redisTemplate.keys(KEY_PREFIX + "*");
+      if (keys == null || keys.isEmpty()) {
+        return Map.of();
+      }
+      List<String> keyList = keys.stream().toList();
+      List<String> values = redisTemplate.opsForValue().multiGet(keyList);
+      return keyList.stream()
+          .collect(Collectors.toMap(k -> k.substring(KEY_PREFIX.length()), k -> values.get(keyList.indexOf(k))));
+    } catch (Exception e) {
       return Map.of();
     }
-    List<String> keyList = keys.stream().toList();
-    List<String> values = redisTemplate.opsForValue().multiGet(keyList);
-    return keyList.stream()
-        .collect(Collectors.toMap(k -> k.substring(KEY_PREFIX.length()), k -> values.get(keyList.indexOf(k))));
   }
 
   public String readTelemetry(String uavCode) {
-    return redisTemplate.opsForValue().get(KEY_PREFIX + uavCode);
+    try {
+      return redisTemplate.opsForValue().get(KEY_PREFIX + uavCode);
+    } catch (Exception e) {
+      return null;
+    }
   }
 
   /**
@@ -66,5 +78,13 @@ public class TelemetryService {
       // ignore parse issues, treat as ONLINE when telemetry exists
     }
     return UavStatus.ONLINE;
+  }
+
+  public boolean isOnline(String payload) {
+      if (payload == null) {
+          return false;
+      } else {
+          return true;
+      }
   }
 }

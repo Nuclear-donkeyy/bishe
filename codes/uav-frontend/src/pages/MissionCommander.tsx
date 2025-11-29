@@ -3,6 +3,7 @@ import {
   Badge,
   Button,
   Card,
+  Descriptions,
   Drawer,
   Form,
   Input,
@@ -16,9 +17,11 @@ import {
   Typography,
   message
 } from 'antd';
-import { CircleMarker, MapContainer, Polyline, TileLayer, useMapEvents } from 'react-leaflet';
-import type { LatLngTuple, LeafletMouseEvent } from 'leaflet';
-import { useEffect, useMemo, useState } from 'react';
+import { CircleMarker, MapContainer, Polyline, TileLayer, useMapEvents, Marker, Tooltip } from 'react-leaflet';
+import type { LatLngTuple, LeafletMouseEvent, Map as LeafletMap, DivIcon } from 'leaflet';
+import L from 'leaflet';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import 'leaflet/dist/leaflet.css';
 import {
   fleetApi,
   missionApi,
@@ -26,8 +29,10 @@ import {
   type MissionDto,
   type MissionTypeDefinition,
   type UserRow,
-  type UavDevice
+  type UavDevice,
+  type MissionStatusPayload
 } from '../services/api';
+import { connectTelemetrySocket } from '../services/ws';
 
 const pointsEqual = (a: LatLngTuple, b: LatLngTuple) =>
   Math.abs(a[0] - b[0]) < 1e-6 && Math.abs(a[1] - b[1]) < 1e-6;
@@ -43,10 +48,6 @@ function RouteClickHandler({ onAddPoint }: { onAddPoint: (point: LatLngTuple) =>
 
 function MissionCommander() {
   const [missions, setMissions] = useState<MissionDto[]>([]);
-  const runningMissions = useMemo(
-    () => missions.filter(m => m.status?.includes('执') || m.status === '执行中'),
-    [missions]
-  );
   const [selectedMissionIds, setSelectedMissionIds] = useState<number[]>([]);
   const [monitoringMission, setMonitoringMission] = useState<MissionDto | null>(null);
   const [createModalOpen, setCreateModalOpen] = useState(false);
@@ -56,26 +57,142 @@ function MissionCommander() {
     missionType: string;
     pilotUsername: string;
     priority: string;
-    assignedUavs?: string[];
+    assignedUav?: string;
   }>();
   const [routeDraft, setRouteDraft] = useState<LatLngTuple[]>([]);
+  const routeMapRef = useRef<LeafletMap | null>(null);
+  const mainMapRef = useRef<LeafletMap | null>(null);
+  const [mainMapCenter, setMainMapCenter] = useState<LatLngTuple>([31.25, 121.45]);
+  const [routeMapCenter, setRouteMapCenter] = useState<LatLngTuple>([31.25, 121.45]);
+  const [recenterLat, setRecenterLat] = useState<string>('');
+  const [recenterLng, setRecenterLng] = useState<string>('');
   const [missionTypes, setMissionTypes] = useState<MissionTypeDefinition[]>([]);
   const [availableUavs, setAvailableUavs] = useState<UavDevice[]>([]);
   const [users, setUsers] = useState<UserRow[]>([]);
+  const [statusFilter, setStatusFilter] = useState<string>('ALL');
+  const [nameFilter, setNameFilter] = useState<string>('');
+  const missionWsRef = useRef<WebSocket | null>(null);
+  const [uavTelemetry, setUavTelemetry] = useState<
+    Record<string, { missionId?: string; lat?: number; lng?: number }>
+  >({});
+  const uavIcon = useMemo<DivIcon>(
+    () =>
+      L.divIcon({
+        className: '',
+        html: `<div style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;border-radius:10px;background:#0f172a;box-shadow:0 4px 10px rgba(0,0,0,0.25);padding:4px;">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="12" cy="12" r="3.2" stroke="#7dd3fc" stroke-width="1.5" fill="#0ea5e9"/>
+            <path d="M4 6h3.5M20 6h-3.5M4 18h3.5M20 18h-3.5" stroke="#22d3ee" stroke-width="1.4" stroke-linecap="round"/>
+            <path d="M4.8 6.8 9 11M19.2 6.8 15 11M4.8 17.2 9 13M19.2 17.2 15 13" stroke="#a5b4fc" stroke-width="1.3" stroke-linecap="round"/>
+          </svg>
+        </div>`,
+        iconSize: [32, 32],
+        iconAnchor: [16, 16],
+        tooltipAnchor: [0, -14]
+      }),
+    []
+  );
 
   useEffect(() => {
     missionApi.list().then(setMissions).catch(() => setMissions([]));
     missionApi.types().then(setMissionTypes).catch(() => setMissionTypes([]));
     fleetApi.available().then(setAvailableUavs).catch(() => setAvailableUavs([]));
     userApi.list().then(setUsers).catch(() => setUsers([]));
+    const telemetryClient = connectTelemetrySocket({
+      onMessage: payload => {
+        if (!payload || !payload.uavCode) return;
+        const key = payload.uavCode as string;
+        setUavTelemetry(prev => ({
+          ...prev,
+          [key]: {
+            missionId: payload.missionId || payload.missionCode,
+            lat: payload.lat,
+            lng: payload.lng
+          }
+        }));
+      }
+    });
+    // 获取浏览器当前位置作为默认中心
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        pos => {
+          const next: LatLngTuple = [pos.coords.latitude, pos.coords.longitude];
+          setMainMapCenter(next);
+          setRouteMapCenter(next);
+          setRecenterLat(String(next[0]));
+          setRecenterLng(String(next[1]));
+          routeMapRef.current?.setView(next);
+        },
+        () => void 0,
+        { enableHighAccuracy: true, timeout: 3000 }
+      );
+    }
+    return () => {
+      telemetryClient.deactivate();
+    };
   }, []);
 
   useEffect(() => {
-    if (runningMissions.length && !selectedMissionIds.length) {
-      setSelectedMissionIds(runningMissions.map(m => m.id).slice(0, 2));
-    }
-  }, [runningMissions, selectedMissionIds.length]);
+    const WS_URL = 'ws://localhost:8080/ws/uav-telemetry';
+    const socket = new WebSocket(WS_URL);
+    missionWsRef.current = socket;
 
+    const sendFrame = (command: string, headers: Record<string, string>) => {
+      const lines = [command];
+      Object.entries(headers).forEach(([k, v]) => lines.push(`${k}:${v}`));
+      lines.push('', '');
+      socket.send(`${lines.join('\n')}\u0000`);
+    };
+
+    socket.onopen = () => {
+      sendFrame('CONNECT', { 'accept-version': '1.2', 'heart-beat': '10000,10000' });
+    };
+
+    socket.onmessage = event => {
+      const raw = String(event.data);
+      const frames = raw.split('\u0000').filter(Boolean);
+      frames.forEach(frame => {
+        const lines = frame.split('\n');
+        const command = lines.shift() || '';
+        const headers: Record<string, string> = {};
+        while (lines.length) {
+          const line = lines.shift();
+          if (line === '') break;
+          const [k, ...rest] = (line || '').split(':');
+          headers[k] = rest.join(':');
+        }
+        const body = lines.join('\n');
+        if (command === 'CONNECTED') {
+          sendFrame('SUBSCRIBE', { id: 'mission-updates', destination: '/topic/mission-updates', ack: 'auto' });
+        }
+        if (command === 'MESSAGE') {
+          try {
+            const payload = JSON.parse(body) as MissionStatusPayload;
+            setMissions(prev =>
+              prev.map(m =>
+                m.missionCode === payload.missionCode ? { ...m, status: payload.status } : m
+              )
+            );
+          } catch {
+            // ignore
+          }
+        }
+      });
+    };
+
+    return () => {
+      socket.close();
+    };
+  }, []);
+  const filteredMissions = useMemo(
+    () =>
+      missions.filter(m => {
+        const statusOk = statusFilter === 'ALL' || (m.status || '').toUpperCase() === statusFilter;
+        const nameOk = !nameFilter || (m.name || '').toLowerCase().includes(nameFilter.toLowerCase());
+        return statusOk && nameOk;
+      }),
+    [missions, statusFilter, nameFilter]
+  );
   const availableUavOptions = useMemo(
     () =>
       availableUavs.map(item => ({
@@ -121,23 +238,63 @@ function MissionCommander() {
     });
   };
 
+  // ensure Leaflet map resizes correctly when modal opens
+  useEffect(() => {
+    if (routeModalOpen && routeMapRef.current) {
+      setTimeout(() => routeMapRef.current?.invalidateSize(), 100);
+    }
+  }, [routeModalOpen]);
+
   const selectedMissions = useMemo(
     () => missions.filter(mission => selectedMissionIds.includes(mission.id)),
     [missions, selectedMissionIds]
   );
+
+  useEffect(() => {
+    if (selectedMissions.length && selectedMissions[0].route?.length) {
+      const [lat, lng] = selectedMissions[0].route[0];
+      setMainMapCenter([lat, lng]);
+      mainMapRef.current?.setView([lat, lng]);
+    }
+  }, [selectedMissions]);
+
+  const distinctStatuses = useMemo(
+    () => Array.from(new Set(missions.map(m => m.status).filter(Boolean))),
+    [missions]
+  );
+
+  
 
   const handleLineClick = (mission: MissionDto) => () => {
     setMonitoringMission(mission);
   };
 
   const renderStatusTag = (status: MissionDto['status']) => {
-    if (status?.includes('执')) return <Tag color="green">{status}</Tag>;
-    if (status?.includes('队')) return <Tag color="orange">{status}</Tag>;
-    if (status?.includes('异常')) return <Tag color="red">{status}</Tag>;
-    return <Tag color="blue">{status}</Tag>;
+    switch ((status || '').toUpperCase()) {
+      case 'QUEUE':
+        return <Tag color="blue">排队</Tag>;
+      case 'RUNNING':
+        return <Tag color="green">运行中</Tag>;
+      case 'COMPLETED':
+        return <Tag color="default">已完成</Tag>;
+      case 'INTERRUPTED':
+        return <Tag color="red">已中断</Tag>;
+      default:
+        return <Tag color="default">{status || '??'}</Tag>;
+    }
   };
 
-  const creationMapCenter: LatLngTuple = [31.25, 121.45];
+  const handleRecenter = () => {
+    const lat = parseFloat(recenterLat);
+    const lng = parseFloat(recenterLng);
+    if (Number.isNaN(lat) || Number.isNaN(lng)) {
+      message.warning('请输入有效的经纬度');
+      return;
+    }
+    const next: LatLngTuple = [lat, lng];
+    setRouteMapCenter(next);
+    routeMapRef.current?.setView(next);
+  };
 
   const handleCreateMission = () => {
     if (routeDraft.length < 3) {
@@ -156,7 +313,7 @@ function MissionCommander() {
             priority: values.priority,
             route: normalizedRoute.map(p => [p[0], p[1]]),
             milestones: [],
-            assignedUavs: values.assignedUavs
+            assignedUavs: values.assignedUav ? [values.assignedUav] : []
           })
           .then(created => {
             setMissions(prev => [created, ...prev]);
@@ -177,7 +334,7 @@ function MissionCommander() {
     if (!mission.missionCode) return;
     Modal.confirm({
       title: `确认中断任务「${mission.name}」？`,
-      content: '任务将标记为异常中止，无法继续执行。',
+      content: '任务将标记为已中断，无法继续执行。',
       okText: '确认中断',
       okType: 'danger',
       cancelText: '取消',
@@ -187,7 +344,7 @@ function MissionCommander() {
           .then(() => {
             setMissions(prev =>
               prev.map(item =>
-                item.id == mission.id ? { ...item, status: '异常中止', progress: 0 } : item
+                item.id == mission.id ? { ...item, status: 'INTERRUPTED', progress: 0 } : item
               )
             );
             setSelectedMissionIds(prev => prev.filter(id => id !== mission.id));
@@ -211,14 +368,39 @@ function MissionCommander() {
               </Button>
             }
           >
+            <Space direction="horizontal" wrap style={{ width: '100%', marginBottom: 12 }}>
+              <Select
+                style={{ minWidth: 180 }}
+                value={statusFilter}
+                onChange={setStatusFilter}
+                options={[
+                  { label: '全部', value: 'ALL' },
+                  { label: '排队', value: 'QUEUE' },
+                  { label: '进行中', value: 'RUNNING' },
+                  { label: '已结束', value: 'COMPLETED' },
+                  { label: '已中断', value: 'INTERRUPTED' }
+                ]}
+                placeholder="按状态筛选"
+              />
+              <Input
+                placeholder="按名称筛选"
+                value={nameFilter}
+                onChange={e => setNameFilter(e.target.value)}
+                allowClear
+                style={{ minWidth: 220 }}
+              />
+            </Space>
             <List
               style={{ flex: 1, overflow: 'auto' }}
-              dataSource={missions}
+              dataSource={filteredMissions}
               renderItem={mission => (
                 <List.Item
                   key={mission.id}
                   style={{ cursor: 'pointer', alignItems: 'flex-start' }}
-                  onClick={() => setMonitoringMission(mission)}
+                  onClick={() => {
+                    setMonitoringMission(mission);
+                    setSelectedMissionIds([mission.id]);
+                  }}
                   actions={[renderStatusTag(mission.status)]}
                 >
                   <List.Item.Meta
@@ -227,20 +409,6 @@ function MissionCommander() {
                       <Space>
                         <EnvironmentOutlined />
                         {mission.name}
-                      </Space>
-                    }
-                    description={
-                      <Space direction="vertical" size={0}>
-                        <Space split={<span>·</span>} wrap>
-                          <span>类型：{mission.missionType}</span>
-                          <span>优先级：{mission.priority}</span>
-                          <span>进度：{mission.progress ?? 0}%</span>
-                        </Space>
-                        {mission.assignedUavs?.length ? (
-                          <Typography.Text type="secondary">
-                            执行无人机：{mission.assignedUavs.join('、')}
-                          </Typography.Text>
-                        ) : null}
                       </Space>
                     }
                   />
@@ -263,11 +431,18 @@ function MissionCommander() {
                 <Select
                   mode="multiple"
                   value={selectedMissionIds}
-                  placeholder="选择正在执行的任务航线"
+                  placeholder="选择任务航线"
                   style={{ minWidth: 260 }}
-                  onChange={setSelectedMissionIds}
-                  options={runningMissions.map(m => ({
-                    label: `${m.name}（${m.status}）`,
+                  onChange={ids => {
+                    setSelectedMissionIds(ids);
+                    const first = missions.find(m => m.id === ids[0]);
+                    if (first?.route?.length) {
+                      const [lat, lng] = first.route[0];
+                      setMainMapCenter([lat, lng]);
+                    }
+                  }}
+                  options={filteredMissions.map(m => ({
+                    label: `${m.name}（${m.status ?? '未知'}）`,
                     value: m.id
                   }))}
                   maxTagCount="responsive"
@@ -276,7 +451,8 @@ function MissionCommander() {
             </Space>
             <div style={{ marginTop: 16, flex: 1 }}>
               <MapContainer
-                center={[31.25, 121.45]}
+                ref={mainMapRef}
+                center={mainMapCenter}
                 zoom={11}
                 style={{ height: '100%', borderRadius: 12, overflow: 'hidden' }}
               >
@@ -297,6 +473,25 @@ function MissionCommander() {
                     }}
                   />
                 ))}
+                {selectedMissions.flatMap(mission => {
+                  if ((mission.status || '').toUpperCase() !== 'RUNNING') return [];
+                  const missionKey = mission.missionCode || mission.id?.toString() || '';
+                  if (!missionKey) return [];
+                  return Object.entries(uavTelemetry).flatMap(([code, t]) => {
+                    if (t.lat == null || t.lng == null) return [];
+                    const mid = (t.missionId || '').toString();
+                    if (mid === missionKey) {
+                      return (
+                        <Marker key={`${mission.id}-${code}`} position={[t.lat, t.lng]} icon={uavIcon}>
+                          <Tooltip direction="top" offset={[0, -10]} opacity={0.9}>
+                            <span>{`UAV ${code}`}</span>
+                          </Tooltip>
+                        </Marker>
+                      );
+                    }
+                    return [];
+                  });
+                })}
               </MapContainer>
             </div>
           </Card>
@@ -304,41 +499,30 @@ function MissionCommander() {
       </Row>
 
       <Drawer
-        title={monitoringMission ? `${monitoringMission.name} · 执行监控` : ''}
+        title={monitoringMission ? `${monitoringMission.name} - Details` : ''}
         open={!!monitoringMission}
         onClose={() => setMonitoringMission(null)}
         width={420}
       >
         {monitoringMission ? (
           <Space direction="vertical" style={{ width: '100%' }}>
-            <Badge status="processing" text={`状态：${monitoringMission.status}`} />
-            <Badge status="default" text={`负责人：${monitoringMission.pilotName}`} />
-            <Badge status="default" text={`优先级：${monitoringMission.priority}`} />
-            <Badge status="default" text={`任务类型：${monitoringMission.missionType}`} />
-            {monitoringMission.status?.includes('执') ? (
-              <Button danger onClick={() => handleInterruptMission(monitoringMission)}>
-                中断任务
-              </Button>
+            <Descriptions column={1} bordered size="small">
+              <Descriptions.Item label="Name">{monitoringMission.name}</Descriptions.Item>
+              <Descriptions.Item label="Status">{renderStatusTag(monitoringMission.status)}</Descriptions.Item>
+              <Descriptions.Item label="Type">{monitoringMission.missionType}</Descriptions.Item>
+              <Descriptions.Item label="Pilot">{monitoringMission.pilotName}</Descriptions.Item>
+              <Descriptions.Item label="Priority">{monitoringMission.priority}</Descriptions.Item>
+              <Descriptions.Item label="Code">{monitoringMission.missionCode}</Descriptions.Item>
+              <Descriptions.Item label="UAVs">
+                {monitoringMission.assignedUavs?.length
+                  ? monitoringMission.assignedUavs.join(', ')
+                  : 'Not assigned'}
+              </Descriptions.Item>
+              <Descriptions.Item label="Progress">{monitoringMission.progress ?? 0}%</Descriptions.Item>
+            </Descriptions>
+            {['QUEUE', 'RUNNING'].includes((monitoringMission.status || '').toUpperCase()) ? (
+              <Button danger onClick={() => handleInterruptMission(monitoringMission)}>中断任务</Button>
             ) : null}
-            <Typography.Title level={5}>执行无人机</Typography.Title>
-            {monitoringMission.assignedUavs?.length ? (
-              <Space wrap>
-                {monitoringMission.assignedUavs.map(uavId => (
-                  <Tag key={uavId}>{uavId}</Tag>
-                ))}
-              </Space>
-            ) : (
-              <Typography.Text type="secondary">尚未分配无人机</Typography.Text>
-            )}
-            <Typography.Title level={5}>里程碑</Typography.Title>
-            <List
-              dataSource={monitoringMission.milestones ?? []}
-              renderItem={item => (
-                <List.Item>
-                  <List.Item.Meta description={item} />
-                </List.Item>
-              )}
-            />
           </Space>
         ) : null}
       </Drawer>
@@ -400,13 +584,11 @@ function MissionCommander() {
               ]}
             />
           </Form.Item>
-          <Form.Item name="assignedUavs" label="执行无人机" tooltip="仅显示在线且未占用的无人机">
+          <Form.Item name="assignedUav" label="执行无人机" tooltip="仅显示在线且未占用的无人机">
             <Select
-              mode="multiple"
               placeholder={availableUavOptions.length ? '请选择无人机' : '暂无可用无人机'}
               options={availableUavOptions}
               disabled={!availableUavOptions.length}
-              maxTagCount="responsive"
             />
           </Form.Item>
           <Form.Item label="航线规划">
@@ -429,12 +611,32 @@ function MissionCommander() {
         <Typography.Paragraph type="secondary" style={{ marginBottom: 8 }}>
           点击地图添加航点，至少 3 个；可“闭合航线”使首尾相连。
         </Typography.Paragraph>
+        <Space style={{ marginBottom: 12 }} wrap>
+          <Input
+            style={{ width: 160 }}
+            placeholder="纬度"
+            value={recenterLat}
+            onChange={e => setRecenterLat(e.target.value)}
+          />
+          <Input
+            style={{ width: 160 }}
+            placeholder="经度"
+            value={recenterLng}
+            onChange={e => setRecenterLng(e.target.value)}
+          />
+          <Button onClick={handleRecenter}>定位</Button>
+        </Space>
         <div style={{ height: 360, borderRadius: 8, overflow: 'hidden', marginBottom: 12 }}>
           <MapContainer
-            center={creationMapCenter}
+            center={routeMapCenter}
             zoom={11}
             style={{ height: '100%', width: '100%' }}
             attributionControl={false}
+            whenReady={() => {
+              setTimeout(() => routeMapRef.current?.invalidateSize(), 50);
+            }}
+            ref={routeMapRef as any}
+            key={routeModalOpen ? 'open' : 'closed'}
           >
             <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
             <RouteClickHandler onAddPoint={handleRoutePointAdd} />

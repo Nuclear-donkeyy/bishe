@@ -1,105 +1,164 @@
-import time
+import argparse
 import json
 import math
-import random
-import argparse
+import threading
+import time
+from typing import List, Tuple, Optional
+
 from paho.mqtt import client as mqtt
 
-BROKER_HOST = "localhost"   # Docker 映射出来的 1883
+# MQTT broker config
+BROKER_HOST = "localhost"
 BROKER_PORT = 1883
 
-connected = False  # 连接标记，在 on_connect 里置为 True
 
+class UavSimulator:
+    def __init__(self, uavcode: str, init_batt: float, init_lat: float, init_lng: float):
+        self.uavcode = uavcode
+        self.battery = init_batt
+        self.lat = init_lat
+        self.lng = init_lng
+        self.alt = 0.0
+        self.state = "IDLE"  # IDLE / EXECUTING / RETURNING
+        self.mission_id: Optional[str] = None
+        self.route: List[Tuple[float, float]] = []
+        self.route_index = 0
+        self.speed_mps = 30.0  # 飞行速度，约 30m/s
+        self.interval = 0.5    # 发送周期
+        self.lock = threading.Lock()
 
-def on_connect(client, userdata, flags, rc):
-    global connected
-    if rc == 0:
-        connected = True
-        print("✅ 已连接到 MQTT Broker")
-    else:
-        print(f"❌ 连接失败，返回码 rc={rc}")
+        self.client = mqtt.Client(client_id=f"UAV-{uavcode}", protocol=mqtt.MQTTv311)
+        self.client.on_connect = self._on_connect
+        self.client.on_disconnect = self._on_disconnect
+        self.client.on_message = self._on_message
+        self.connected = False
 
+        self.topic_telemetry = f"uav/{uavcode}/telemetry"
+        self.topic_command = f"uav/{uavcode}/command"
 
-def on_disconnect(client, userdata, rc):
-    global connected
-    connected = False
-    print(f"⚠️ 连接断开，rc={rc}")
+    # MQTT callbacks
+    def _on_connect(self, client, userdata, flags, rc):
+        self.connected = True
+        print(f"[MQTT] connected rc={rc}")
+        client.subscribe(self.topic_command)
+        print(f"[MQTT] subscribed {self.topic_command}")
+
+    def _on_disconnect(self, client, userdata, rc):
+        self.connected = False
+        print(f"[MQTT] disconnected rc={rc}")
+
+    def _on_message(self, client, userdata, msg):
+        try:
+            payload = json.loads(msg.payload.decode("utf-8"))
+        except Exception as e:
+            print(f"[CMD] bad payload: {e}")
+            return
+        if payload.get("type") == "mission.start":
+            route = payload.get("route") or []
+            if len(route) < 2:
+                print("[CMD] route too short, ignore")
+                return
+            mission_code = payload.get("missionCode") or payload.get("missionId")
+            with self.lock:
+                self.route = [(float(p[0]), float(p[1])) for p in route]
+                self.route_index = 0
+                self.mission_id = mission_code
+                self.state = "EXECUTING"
+            print(f"[CMD] received mission.start mission={mission_code}, points={len(route)}")
+        elif payload.get("type") == "interrupt":
+            print("[CMD] received interrupt, switching to RETURNING")
+            with self.lock:
+                self.state = "RETURNING"
+
+    # Simulation step
+    def _step_route(self):
+        if self.state not in ("EXECUTING", "RETURNING") or not self.route:
+            return
+        if self.route_index >= len(self.route):
+            self.state = "RETURNING"
+            return
+        target_lat, target_lng = self.route[self.route_index]
+        # 简单直线插值，移动 speed_mps 对应的大约经纬度偏移（粗略，够用）
+        step_deg = self.speed_mps / 111_000  # 每度约111km
+        dlat = target_lat - self.lat
+        dlng = target_lng - self.lng
+        dist = math.hypot(dlat, dlng)
+        if dist < step_deg:
+            # 到达该航点
+            self.lat, self.lng = target_lat, target_lng
+            self.route_index += 1
+            if self.route_index >= len(self.route):
+                self.state = "RETURNING"
+        else:
+            self.lat += dlat / dist * step_deg
+            self.lng += dlng / dist * step_deg
+        # 电量下降
+        self.battery = max(0, self.battery - 0.05)
+
+    def _build_payload(self):
+        # 构造传感器数据占位，可根据任务类型映射指标；此处演示为简易对象
+        sensors = {}
+        return {
+            "uavCode": self.uavcode,
+            "missionId": self.mission_id,
+            "status": self.state,
+            "lat": self.lat,
+            "lng": self.lng,
+            "battery": round(self.battery, 1),
+            "sensors": sensors,
+            "ts": time.time(),
+        }
+
+    def run(self):
+        self.client.connect(BROKER_HOST, BROKER_PORT, keepalive=60)
+        self.client.loop_start()
+        # wait connection
+        for _ in range(50):
+            if self.connected:
+                break
+            time.sleep(0.1)
+        if not self.connected:
+            print("[MQTT] connect timeout")
+            return
+        print(f"[SIM] publishing telemetry to {self.topic_telemetry}, command topic {self.topic_command}")
+        try:
+            while True:
+                with self.lock:
+                    # 在 RETURNING 时每轮都检查是否回到起点，距离小于 1 米则视为返航成功并停止移动
+                    if self.state == "RETURNING":
+                        if self.route:
+                            home_lat, home_lng = self.route[0]
+                            dist_home_m = math.hypot(self.lat - home_lat, self.lng - home_lng) * 111_000
+                            if dist_home_m < 1.0:
+                                self.state = "IDLE"
+                                self.mission_id = None
+                                self.route = []
+                                self.route_index = 0
+                        else:
+                            self.state = "IDLE"
+                            self.mission_id = None
+                    if self.state != "IDLE":
+                        self._step_route()
+                    payload = self._build_payload()
+                self.client.publish(self.topic_telemetry, json.dumps(payload), qos=0)
+                time.sleep(self.interval)
+        except KeyboardInterrupt:
+            print("[SIM] interrupted")
+        finally:
+            self.client.loop_stop()
+            self.client.disconnect()
 
 
 def main():
-    parser = argparse.ArgumentParser(description="UAV circle telemetry simulator")
-    parser.add_argument("uavcode", help="无人机唯一标识，例如 001 或 UAV001")
-    parser.add_argument("--radius", type=float, default=10.0, help="圆周半径，默认 10")
-    parser.add_argument("--omega", type=float, default=1.0, help="角速度 rad/s，默认 1")
-    parser.add_argument("--interval", type=float, default=0.1, help="发送间隔秒，默认 0.1s")
+    parser = argparse.ArgumentParser(description="UAV telemetry & command simulator")
+    parser.add_argument("uavcode", help="无人机编号，例如 001 或 UAV001")
+    parser.add_argument("battery", type=float, help="初始电量百分比")
+    parser.add_argument("lat", type=float, help="初始纬度")
+    parser.add_argument("lng", type=float, help="初始经度")
     args = parser.parse_args()
 
-    uavcode = args.uavcode
-    radius = args.radius
-    omega = args.omega          # 角速度
-    interval = args.interval    # 发送周期（秒）
-
-    client_id = f"UAV-{uavcode}"
-    topic_telemetry = f"uav/{uavcode}/telemetry"   # 注意不要前导 /，方便匹配 uav/+/telemetry
-
-    client = mqtt.Client(
-        client_id=client_id,
-        protocol=mqtt.MQTTv311
-    )
-
-    client.on_connect = on_connect
-    client.on_disconnect = on_disconnect
-
-    print(f"🔌 正在连接到 MQTT Broker {BROKER_HOST}:{BROKER_PORT} ...")
-    client.connect(BROKER_HOST, BROKER_PORT, keepalive=60)
-    client.loop_start()
-
-    # 等连接稳定一下
-    for _ in range(50):  # 最多等 5 秒
-        if connected:
-            break
-        time.sleep(0.1)
-
-    if not connected:
-        print("❌ 在超时时间内未能连接到 MQTT Broker，退出。")
-        client.loop_stop()
-        client.disconnect()
-        return
-
-    print(f"🚁 UAV {uavcode} 开始在主题 {topic_telemetry} 上发布圆周遥测数据...")
-    start_ts = time.time()
-
-    try:
-        while True:
-            t = time.time() - start_ts    # 从起飞到现在的时间（秒）
-            theta = omega * t             # 角度 = ω * t
-
-            x = radius * math.cos(theta)
-            y = radius * math.sin(theta)
-
-            payload = {
-                "uavCode": uavcode,
-                "x": x,
-                "y": y,
-                "battery": random.randint(50, 100),
-                "ts": time.time()
-            }
-
-            # QoS=0 就够了，追求频率不追求每一帧可靠性
-            result = client.publish(topic_telemetry, json.dumps(payload), qos=0)
-            status = result[0]
-            if status == 0:
-                print(f"📤 {topic_telemetry} -> {payload}")
-            else:
-                print(f"❌ 发布失败，status={status}")
-
-            time.sleep(interval)  # 100ms = 0.1s
-    except KeyboardInterrupt:
-        print("🛑 收到中断信号，准备退出...")
-    finally:
-        client.loop_stop()
-        client.disconnect()
-        print("👋 已断开与 MQTT Broker 的连接。")
+    sim = UavSimulator(args.uavcode, args.battery, args.lat, args.lng)
+    sim.run()
 
 
 if __name__ == "__main__":
