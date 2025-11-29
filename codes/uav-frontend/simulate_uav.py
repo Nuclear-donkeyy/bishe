@@ -3,7 +3,7 @@ import json
 import math
 import threading
 import time
-from typing import List, Tuple, Optional
+from typing import List, Optional, Tuple
 
 from paho.mqtt import client as mqtt
 
@@ -13,7 +13,7 @@ BROKER_PORT = 1883
 
 
 class UavSimulator:
-    def __init__(self, uavcode: str, init_batt: float, init_lat: float, init_lng: float):
+    def __init__(self, uavcode: str, init_batt: float, init_lat: float, init_lng: float, sensors: str = ""):
         self.uavcode = uavcode
         self.battery = init_batt
         self.lat = init_lat
@@ -26,8 +26,11 @@ class UavSimulator:
         self.route: List[Tuple[float, float]] = []
         self.route_index = 0
         self.speed_mps = 30.0  # 飞行速度，约 30m/s
-        self.interval = 0.5    # 发送周期
+        self.interval = 0.5  # 发送周期
         self.lock = threading.Lock()
+
+        self.sensor_keys = [s.strip() for s in sensors.split(",") if s.strip()]
+        self.sensor_state = {key: 50.0 for key in self.sensor_keys}
 
         self.client = mqtt.Client(client_id=f"UAV-{uavcode}", protocol=mqtt.MQTTv311)
         self.client.on_connect = self._on_connect
@@ -74,8 +77,8 @@ class UavSimulator:
 
     # Simulation step
     def _step_route(self):
+        step_deg = self.speed_mps / 111_000  # 每度约111km
         if self.state not in ("EXECUTING", "RETURNING") or not self.route:
-            # RETURNING 时如果没有航线也要回到 home
             if self.state == "RETURNING":
                 target_lat, target_lng = self.home_lat, self.home_lng
             else:
@@ -87,16 +90,14 @@ class UavSimulator:
                 self.state = "RETURNING"
                 return
             target_lat, target_lng = self.route[self.route_index]
-        # 简单直线插值，移动 speed_mps 对应的大约经纬度偏移（粗略，够用）
-        step_deg = self.speed_mps / 111_000  # 每度约111km
+
         dlat = target_lat - self.lat
         dlng = target_lng - self.lng
         dist = math.hypot(dlat, dlng)
         if dist < step_deg:
-            # 到达目标点
             self.lat, self.lng = target_lat, target_lng
             if self.state == "RETURNING":
-                # 留给 run 循环检测是否回到 home 并切 IDLE
+                # run() 会检测是否到家并切 IDLE
                 pass
             else:
                 self.route_index += 1
@@ -105,12 +106,17 @@ class UavSimulator:
         else:
             self.lat += dlat / dist * step_deg
             self.lng += dlng / dist * step_deg
-        # 电量下降
         self.battery = max(0, self.battery - 0.05)
 
     def _build_payload(self):
-        # 构造传感器数据占位，可根据任务类型映射指标；此处演示为简易对象
+        # 构建传感器数据（data），模拟数值上下波动
         sensors = {}
+        for key in self.sensor_keys:
+            base = self.sensor_state.get(key, 50.0)
+            drift = math.sin(time.time()) * 2
+            val = max(0, base + drift)
+            self.sensor_state[key] = val
+            sensors[key] = round(val, 2)
         return {
             "uavCode": self.uavcode,
             "missionId": self.mission_id,
@@ -119,13 +125,13 @@ class UavSimulator:
             "lng": self.lng,
             "battery": round(self.battery, 1),
             "sensors": sensors,
+            "data": sensors,
             "ts": time.time(),
         }
 
     def run(self):
         self.client.connect(BROKER_HOST, BROKER_PORT, keepalive=60)
         self.client.loop_start()
-        # wait connection
         for _ in range(50):
             if self.connected:
                 break
@@ -137,7 +143,6 @@ class UavSimulator:
         try:
             while True:
                 with self.lock:
-                    # 在 RETURNING 时每轮都检查是否回到起点，距离小于 1 米则视为返航成功并停止移动
                     if self.state == "RETURNING":
                         dist_home_m = math.hypot(self.lat - self.home_lat, self.lng - self.home_lng) * 111_000
                         if dist_home_m < 1.0:
@@ -159,13 +164,19 @@ class UavSimulator:
 
 def main():
     parser = argparse.ArgumentParser(description="UAV telemetry & command simulator")
-    parser.add_argument("uavcode", help="无人机编号，例如 001 或 UAV001")
+    parser.add_argument("uavcode", help="无人机编号，例如 001 或UAV001")
     parser.add_argument("battery", type=float, help="初始电量百分比")
     parser.add_argument("lat", type=float, help="初始纬度")
     parser.add_argument("lng", type=float, help="初始经度")
+    parser.add_argument(
+        "--sensors",
+        type=str,
+        default="",
+        help="传感器指标列表，逗号分隔，对应 telemetry.data 的 key"
+    )
     args = parser.parse_args()
 
-    sim = UavSimulator(args.uavcode, args.battery, args.lat, args.lng)
+    sim = UavSimulator(args.uavcode, args.battery, args.lat, args.lng, args.sensors)
     sim.run()
 
 
