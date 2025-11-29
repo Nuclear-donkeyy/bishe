@@ -35,7 +35,7 @@ public class MissionController {
   }
 
   @GetMapping("/missions/{missionCode}")
-  public ResponseEntity<MissionDto> detail(@PathVariable String missionCode) {
+  public ResponseEntity<MissionDto> detail(@PathVariable("missionCode") String missionCode) {
     return missionService
         .findByCode(missionCode)
         .map(ResponseEntity::ok)
@@ -50,7 +50,7 @@ public class MissionController {
 
   @PatchMapping("/missions/{missionCode}")
   public ResponseEntity<MissionDto> updateProgress(
-      @PathVariable String missionCode, @RequestBody ProgressPayload request) {
+      @PathVariable("missionCode") String missionCode, @RequestBody ProgressPayload request) {
     if (request == null || request.progress() == null) {
       return ResponseEntity.badRequest().build();
     }
@@ -58,7 +58,7 @@ public class MissionController {
   }
 
   @PostMapping("/missions/{missionCode}/interrupt")
-  public ResponseEntity<Void> interrupt(@PathVariable String missionCode) {
+  public ResponseEntity<Void> interrupt(@PathVariable("missionCode") String missionCode) {
     missionService.interrupt(missionCode);
     return ResponseEntity.ok().build();
   }

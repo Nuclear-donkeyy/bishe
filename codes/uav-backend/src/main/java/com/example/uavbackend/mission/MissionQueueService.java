@@ -5,6 +5,7 @@ import com.example.uavbackend.fleet.TelemetryService;
 import com.example.uavbackend.fleet.UavDevice;
 import com.example.uavbackend.fleet.UavDeviceMapper;
 import com.example.uavbackend.mqtt.MqttCommandPublisher;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -147,6 +148,20 @@ public class MissionQueueService {
     if (missions == null) {
       return true;
     }
+
+      try{
+          JsonNode node = objectMapper.readTree(payload);
+          if (node.hasNonNull("status")) {
+              String s = node.get("status").asText("");
+              return "ONLINE".equalsIgnoreCase(s)
+                      || "IDLE".equalsIgnoreCase(s);
+          }else{
+              return true;
+          }
+      }catch (Exception e){
+         // ignore
+      }
+
     return missions.stream().noneMatch(m -> MissionStatus.RUNNING.name().equals(m.getStatus()));
   }
 

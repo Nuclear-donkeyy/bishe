@@ -7,13 +7,10 @@ import com.example.uavbackend.auth.UserRole;
 import com.example.uavbackend.auth.UserStatus;
 import com.example.uavbackend.fleet.UavDevice;
 import com.example.uavbackend.fleet.UavDeviceMapper;
-import com.example.uavbackend.mission.MissionStatus;
-import com.example.uavbackend.mission.MissionStatusPayload;
 import com.example.uavbackend.mission.dto.MissionCreateRequest;
 import com.example.uavbackend.mission.dto.MissionDto;
 import java.math.BigDecimal;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -197,29 +194,6 @@ public class MissionService {
       throw new IllegalArgumentException("责任人角色无效");
     }
     return pilot;
-  }
-
-  public void markRunning(String missionCode) {
-    Mission mission =
-        missionMapper.selectOne(
-            new LambdaQueryWrapper<Mission>().eq(Mission::getMissionCode, missionCode));
-    if (mission != null && !MissionStatus.RUNNING.name().equals(mission.getStatus())) {
-      mission.setStatus(MissionStatus.RUNNING.name());
-      missionMapper.updateById(mission);
-      pushStatusUpdate(mission);
-    }
-  }
-
-  public void markCompleted(String missionCode) {
-    Mission mission =
-        missionMapper.selectOne(
-            new LambdaQueryWrapper<Mission>().eq(Mission::getMissionCode, missionCode));
-    if (mission != null && !MissionStatus.COMPLETED.name().equals(mission.getStatus())) {
-      mission.setStatus(MissionStatus.COMPLETED.name());
-      mission.setProgress(100);
-      missionMapper.updateById(mission);
-      pushStatusUpdate(mission);
-    }
   }
 
   private void pushStatusUpdate(Mission mission) {

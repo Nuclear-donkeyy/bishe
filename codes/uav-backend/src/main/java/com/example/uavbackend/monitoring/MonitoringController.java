@@ -27,18 +27,19 @@ public class MonitoringController {
   }
 
   @GetMapping("/tasks/{taskCode}")
-  public ResponseEntity<MonitoringTaskDto> detail(@PathVariable String taskCode) {
+  public ResponseEntity<MonitoringTaskDto> detail(@PathVariable("taskCode") String taskCode) {
     return monitoringService.detail(taskCode).map(ResponseEntity::ok).orElse(ResponseEntity.notFound().build());
   }
 
   @PostMapping("/tasks/{taskCode}/rules")
   public ResponseEntity<RuleDto> addRule(
-      @PathVariable String taskCode, @Valid @RequestBody RuleDto request) {
+      @PathVariable("taskCode") String taskCode, @Valid @RequestBody RuleDto request) {
     return ResponseEntity.status(201).body(monitoringService.addRule(taskCode, request));
   }
 
   @DeleteMapping("/tasks/{taskCode}/rules/{ruleId}")
-  public ResponseEntity<Void> deleteRule(@PathVariable String taskCode, @PathVariable Long ruleId) {
+  public ResponseEntity<Void> deleteRule(
+      @PathVariable("taskCode") String taskCode, @PathVariable("ruleId") Long ruleId) {
     monitoringService.deleteRule(ruleId);
     return ResponseEntity.noContent().build();
   }
