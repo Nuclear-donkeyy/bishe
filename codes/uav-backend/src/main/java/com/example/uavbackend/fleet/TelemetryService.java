@@ -82,13 +82,16 @@ public class TelemetryService {
 
   public boolean isOnline(String payload) {
     if (payload == null) {
-      return false;
+      // 无遥测时视为未知，允许首次调度
+      return true;
     }
     try {
       JsonNode node = objectMapper.readTree(payload);
       if (node.hasNonNull("status")) {
         String s = node.get("status").asText("");
-        return "ONLINE".equalsIgnoreCase(s) || "EXECUTING".equalsIgnoreCase(s);
+        return "ONLINE".equalsIgnoreCase(s)
+            || "EXECUTING".equalsIgnoreCase(s)
+            || "IDLE".equalsIgnoreCase(s);
       }
     } catch (Exception ignored) {
     }

@@ -17,8 +17,9 @@ import {
   Typography,
   message
 } from 'antd';
-import { CircleMarker, MapContainer, Polyline, TileLayer, useMapEvents } from 'react-leaflet';
-import type { LatLngTuple, LeafletMouseEvent, Map as LeafletMap } from 'leaflet';
+import { CircleMarker, MapContainer, Polyline, TileLayer, useMapEvents, Marker, Tooltip } from 'react-leaflet';
+import type { LatLngTuple, LeafletMouseEvent, Map as LeafletMap, DivIcon } from 'leaflet';
+import L from 'leaflet';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import 'leaflet/dist/leaflet.css';
 import {
@@ -31,6 +32,7 @@ import {
   type UavDevice,
   type MissionStatusPayload
 } from '../services/api';
+import { connectTelemetrySocket } from '../services/ws';
 
 const pointsEqual = (a: LatLngTuple, b: LatLngTuple) =>
   Math.abs(a[0] - b[0]) < 1e-6 && Math.abs(a[1] - b[1]) < 1e-6;
@@ -70,12 +72,46 @@ function MissionCommander() {
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [nameFilter, setNameFilter] = useState<string>('');
   const missionWsRef = useRef<WebSocket | null>(null);
+  const [uavTelemetry, setUavTelemetry] = useState<
+    Record<string, { missionId?: string; lat?: number; lng?: number }>
+  >({});
+  const uavIcon = useMemo<DivIcon>(
+    () =>
+      L.divIcon({
+        className: '',
+        html: `<div style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;border-radius:10px;background:#0f172a;box-shadow:0 4px 10px rgba(0,0,0,0.25);padding:4px;">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="12" cy="12" r="3.2" stroke="#7dd3fc" stroke-width="1.5" fill="#0ea5e9"/>
+            <path d="M4 6h3.5M20 6h-3.5M4 18h3.5M20 18h-3.5" stroke="#22d3ee" stroke-width="1.4" stroke-linecap="round"/>
+            <path d="M4.8 6.8 9 11M19.2 6.8 15 11M4.8 17.2 9 13M19.2 17.2 15 13" stroke="#a5b4fc" stroke-width="1.3" stroke-linecap="round"/>
+          </svg>
+        </div>`,
+        iconSize: [32, 32],
+        iconAnchor: [16, 16],
+        tooltipAnchor: [0, -14]
+      }),
+    []
+  );
 
   useEffect(() => {
     missionApi.list().then(setMissions).catch(() => setMissions([]));
     missionApi.types().then(setMissionTypes).catch(() => setMissionTypes([]));
     fleetApi.available().then(setAvailableUavs).catch(() => setAvailableUavs([]));
     userApi.list().then(setUsers).catch(() => setUsers([]));
+    const telemetryClient = connectTelemetrySocket({
+      onMessage: payload => {
+        if (!payload || !payload.uavCode) return;
+        const key = payload.uavCode as string;
+        setUavTelemetry(prev => ({
+          ...prev,
+          [key]: {
+            missionId: payload.missionId || payload.missionCode,
+            lat: payload.lat,
+            lng: payload.lng
+          }
+        }));
+      }
+    });
     // 获取浏览器当前位置作为默认中心
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
@@ -91,6 +127,9 @@ function MissionCommander() {
         { enableHighAccuracy: true, timeout: 3000 }
       );
     }
+    return () => {
+      telemetryClient.deactivate();
+    };
   }, []);
 
   useEffect(() => {
@@ -434,6 +473,25 @@ function MissionCommander() {
                     }}
                   />
                 ))}
+                {selectedMissions.flatMap(mission => {
+                  if ((mission.status || '').toUpperCase() !== 'RUNNING') return [];
+                  const missionKey = mission.missionCode || mission.id?.toString() || '';
+                  if (!missionKey) return [];
+                  return Object.entries(uavTelemetry).flatMap(([code, t]) => {
+                    if (t.lat == null || t.lng == null) return [];
+                    const mid = (t.missionId || '').toString();
+                    if (mid === missionKey) {
+                      return (
+                        <Marker key={`${mission.id}-${code}`} position={[t.lat, t.lng]} icon={uavIcon}>
+                          <Tooltip direction="top" offset={[0, -10]} opacity={0.9}>
+                            <span>{`UAV ${code}`}</span>
+                          </Tooltip>
+                        </Marker>
+                      );
+                    }
+                    return [];
+                  });
+                })}
               </MapContainer>
             </div>
           </Card>

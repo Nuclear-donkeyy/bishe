@@ -4,12 +4,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.eclipse.paho.client.mqttv3.IMqttClient;
 import org.eclipse.paho.client.mqttv3.MqttMessage;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.integration.mqtt.core.MqttPahoClientFactory;
 import org.springframework.stereotype.Component;
 
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class MqttCommandPublisher {
@@ -26,6 +28,7 @@ public class MqttCommandPublisher {
     String topic = commandTopicPrefix.endsWith("/")
         ? commandTopicPrefix + uavCode + "/command"
         : commandTopicPrefix + "/" + uavCode + "/command";
+    log.info("topic"+topic);
     IMqttClient client = mqttClientFactory.getClientInstance(brokerUrl, "uav-command-" + uavCode);
     if (!client.isConnected()) {
       client.connect(mqttClientFactory.getConnectionOptions());

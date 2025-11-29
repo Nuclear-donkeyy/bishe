@@ -5,7 +5,6 @@ import com.example.uavbackend.fleet.TelemetryService;
 import com.example.uavbackend.fleet.UavDevice;
 import com.example.uavbackend.fleet.UavDeviceMapper;
 import com.example.uavbackend.mqtt.MqttCommandPublisher;
-import com.example.uavbackend.mission.MissionStatusPayload;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -18,6 +17,7 @@ import java.util.stream.Collectors;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -27,6 +27,7 @@ import org.springframework.util.StringUtils;
 
 @Component
 @RequiredArgsConstructor
+@Slf4j
 public class MissionQueueService {
   private static final String KEY_PREFIX = "mission:queue:";
   private static final long QUEUE_TTL_MS = 10 * 60 * 1000;
@@ -41,20 +42,23 @@ public class MissionQueueService {
   private final SimpMessagingTemplate messagingTemplate;
 
   public void enqueue(Mission mission, List<List<Double>> route, List<UavDevice> devices, String priority) {
-    MissionQueueItem item = new MissionQueueItem();
-    item.setMissionCode(mission.getMissionCode());
-    item.setUavCodes(devices.stream().map(UavDevice::getUavCode).toList());
-    item.setRoute(route);
-    item.setPriority(priority);
-    item.setEnqueuedAt(Instant.now().toEpochMilli());
-    try {
-      redisTemplate
-          .opsForValue()
-          .set(KEY_PREFIX + mission.getMissionCode(), objectMapper.writeValueAsString(item), QUEUE_TTL_MS);
-    } catch (Exception ignored) {
-      // swallow; queue failure should not break mission creation
+        MissionQueueItem item = new MissionQueueItem();
+        item.setMissionCode(mission.getMissionCode());
+        item.setUavCodes(devices.stream().map(UavDevice::getUavCode).toList());
+        item.setRoute(route);
+        item.setPriority(normalizePriority(priority)); // HIGH/MEDIUM/LOW
+        item.setEnqueuedAt(Instant.now().toEpochMilli());
+        item.setDispatchedAt(null);
+        try {
+            String json = objectMapper.writeValueAsString(item);
+            log.info("Queue mission payload: {}", json);
+            redisTemplate.opsForValue().set(KEY_PREFIX + mission.getMissionCode(), json);
+            log.info("Mission queued missionCode={}, uavs={}, priority={}", mission.getMissionCode(), item.getUavCodes(),
+                    item.getPriority());
+        } catch (Exception ignored) {
+            // swallow; queue failure should not break mission creation
+        }
     }
-  }
 
   public void removeFromQueue(String missionCode) {
     redisTemplate.delete(KEY_PREFIX + missionCode);
@@ -66,6 +70,7 @@ public class MissionQueueService {
     if (keys == null || keys.isEmpty()) {
       return;
     }
+    // 获取所有排队任务
     List<MissionQueueItem> items = new ArrayList<>();
     for (String key : keys) {
       try {
@@ -84,13 +89,18 @@ public class MissionQueueService {
     items.sort(Comparator.comparingInt((MissionQueueItem i) -> priorityWeight(i.getPriority()))
         .reversed()
         .thenComparingLong(MissionQueueItem::getEnqueuedAt));
-
+    log.info("排序后的任务队列:"+items.toString());
+    var chosen = new java.util.HashSet<String>();
     for (MissionQueueItem item : items) {
-      Optional<String> readyUav = item.getUavCodes().stream().filter(this::isUavReady).findFirst();
+      Optional<String> readyUav =
+          item.getUavCodes().stream().filter(u -> !chosen.contains(u)).filter(this::isUavReady).findFirst();
       if (readyUav.isEmpty()) {
+        log.debug("No ready UAV for mission {}", item.getMissionCode());
         continue;
       }
+      log.info("可供选择的无人机"+readyUav.toString());
       String uavCode = readyUav.get();
+      chosen.add(uavCode);
       sendCommandAndStart(item, uavCode);
     }
   }
@@ -104,8 +114,12 @@ public class MissionQueueService {
               "uavCode", uavCode,
               "route", item.getRoute());
       mqttCommandPublisher.publish(uavCode, payload);
-      markMissionStatus(item.getMissionCode(), MissionStatus.RUNNING);
-      removeFromQueue(item.getMissionCode());
+      log.info("Dispatch mission.start missionCode={} to uav={} points={}", item.getMissionCode(), uavCode, item.getRoute().size());
+      item.setDispatchedAt(Instant.now().toEpochMilli());
+      // 写回 redis，标记已下发但仍处于排队键，等待遥测确认
+      redisTemplate
+          .opsForValue()
+          .set(KEY_PREFIX + item.getMissionCode(), objectMapper.writeValueAsString(item), QUEUE_TTL_MS);
     } catch (Exception e) {
       // 如果发送失败，不要删除队列，等下次调度
     }
@@ -136,15 +150,20 @@ public class MissionQueueService {
     return missions.stream().noneMatch(m -> MissionStatus.RUNNING.name().equals(m.getStatus()));
   }
 
-  public void onTelemetryStatus(String uavCode, String status) {
-    if (!StringUtils.hasText(status)) {
-      return;
-    }
-    String upper = status.toUpperCase();
-    if ("EXECUTING".equals(upper)) {
-      markMissionByUav(uavCode, MissionStatus.RUNNING);
-    } else if ("RETURNING".equals(upper)) {
-      markMissionByUav(uavCode, MissionStatus.COMPLETED);
+  public void onTelemetryStatus(String uavCode, String status, String missionId) {
+    String upper = status != null ? status.toUpperCase() : null;
+    if (StringUtils.hasText(missionId)) {
+      if ("EXECUTING".equals(upper) || "RUNNING".equals(upper)) {
+        markMissionById(missionId, MissionStatus.RUNNING);
+      } else if ("RETURNING".equals(upper)) {
+        markMissionById(missionId, MissionStatus.COMPLETED);
+      }
+    } else if (StringUtils.hasText(upper)) {
+      if ("EXECUTING".equals(upper) || "RUNNING".equals(upper)) {
+        markMissionByUav(uavCode, MissionStatus.RUNNING);
+      } else if ("RETURNING".equals(upper)) {
+        markMissionByUav(uavCode, MissionStatus.COMPLETED);
+      }
     }
   }
 
@@ -182,6 +201,28 @@ public class MissionQueueService {
     }
   }
 
+  private void markMissionById(String missionCode, MissionStatus target) {
+    Mission mission =
+        missionMapper.selectOne(new LambdaQueryWrapper<Mission>().eq(Mission::getMissionCode, missionCode));
+    if (mission == null) {
+      return;
+    }
+    switch (target) {
+      case RUNNING -> {
+        if (MissionStatus.QUEUE.name().equals(mission.getStatus())) {
+          markMissionStatus(mission.getMissionCode(), MissionStatus.RUNNING);
+          removeFromQueue(mission.getMissionCode());
+        }
+      }
+      case COMPLETED -> {
+        if (MissionStatus.RUNNING.name().equals(mission.getStatus())) {
+          markMissionStatus(mission.getMissionCode(), MissionStatus.COMPLETED);
+        }
+      }
+      default -> {}
+    }
+  }
+
   private void pushStatusUpdate(Mission mission) {
     messagingTemplate.convertAndSend(
         "/topic/mission-updates",
@@ -200,6 +241,9 @@ public class MissionQueueService {
     }
     missionMapper.updateById(mission);
     pushStatusUpdate(mission);
+    if (status != MissionStatus.QUEUE) {
+      removeFromQueue(missionCode);
+    }
   }
 
   private int priorityWeight(String priority) {
@@ -223,5 +267,16 @@ public class MissionQueueService {
     private List<List<Double>> route;
     private String priority;
     private long enqueuedAt;
+    private Long dispatchedAt;
   }
+
+    private String normalizePriority(String priority) {
+        if (!StringUtils.hasText(priority)) return "MEDIUM";
+        String p = priority.trim().toUpperCase();
+        return switch (p) {
+            case "HIGH", "高" -> "HIGH";
+            case "LOW", "低" -> "LOW";
+            default -> "MEDIUM";
+        };
+    }
 }
