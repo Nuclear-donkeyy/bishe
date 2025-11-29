@@ -26,11 +26,13 @@ import {
   fleetApi,
   missionApi,
   userApi,
+  alertApi,
   type MissionDto,
   type MissionTypeDefinition,
   type UserRow,
   type UavDevice,
-  type MissionStatusPayload
+  type MissionStatusPayload,
+  type AlertRule
 } from '../services/api';
 import { connectTelemetrySocket } from '../services/ws';
 
@@ -58,6 +60,7 @@ function MissionCommander() {
     pilotUsername: string;
     priority: string;
     assignedUav?: string;
+    ruleId?: number;
   }>();
   const [routeDraft, setRouteDraft] = useState<LatLngTuple[]>([]);
   const routeMapRef = useRef<LeafletMap | null>(null);
@@ -69,6 +72,7 @@ function MissionCommander() {
   const [missionTypes, setMissionTypes] = useState<MissionTypeDefinition[]>([]);
   const [availableUavs, setAvailableUavs] = useState<UavDevice[]>([]);
   const [users, setUsers] = useState<UserRow[]>([]);
+  const [alertRules, setAlertRules] = useState<AlertRule[]>([]);
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [nameFilter, setNameFilter] = useState<string>('');
   const missionWsRef = useRef<WebSocket | null>(null);
@@ -98,6 +102,7 @@ function MissionCommander() {
     missionApi.types().then(setMissionTypes).catch(() => setMissionTypes([]));
     fleetApi.available().then(setAvailableUavs).catch(() => setAvailableUavs([]));
     userApi.list().then(setUsers).catch(() => setUsers([]));
+    alertApi.rules.list().then(setAlertRules).catch(() => setAlertRules([]));
     const telemetryClient = connectTelemetrySocket({
       onMessage: payload => {
         if (!payload || !payload.uavCode) return;
@@ -313,7 +318,8 @@ function MissionCommander() {
             priority: values.priority,
             route: normalizedRoute.map(p => [p[0], p[1]]),
             milestones: [],
-            assignedUavs: values.assignedUav ? [values.assignedUav] : []
+            assignedUavs: values.assignedUav ? [values.assignedUav] : [],
+            ruleId: values.ruleId
           })
           .then(created => {
             setMissions(prev => [created, ...prev]);
@@ -588,6 +594,13 @@ function MissionCommander() {
               placeholder={availableUavOptions.length ? '请选择无人机' : '暂无可用无人机'}
               options={availableUavOptions}
               disabled={!availableUavOptions.length}
+            />
+          </Form.Item>
+          <Form.Item name="ruleId" label="报警规则">
+            <Select
+              allowClear
+              placeholder="可选，选择则启用报警规则"
+              options={alertRules.map(r => ({ label: r.name, value: r.id }))}
             />
           </Form.Item>
           <Form.Item label="航线规划">

@@ -34,6 +34,7 @@ type TelemetryByMission = Record<
 
 function Monitoring() {
   const [missions, setMissions] = useState<MissionDto[]>([]);
+  const missionsRef = useRef<MissionDto[]>([]);
   const [activeMissionCode, setActiveMissionCode] = useState<string>('');
   const [missionTypes, setMissionTypes] = useState<MissionTypeItem[]>([]);
   const [metrics, setMetrics] = useState<MetricItem[]>([]);
@@ -50,6 +51,7 @@ function Monitoring() {
         configApi.metrics.list()
       ]);
       setMissions(ms);
+      missionsRef.current = ms;
       setMissionTypes((mts as MissionTypeItem[]) || []);
       setMetrics((mets as MetricItem[]) || []);
       if (ms.length && !activeMissionCode) {
@@ -70,10 +72,11 @@ function Monitoring() {
         const missionId = payload.missionId || payload.missionCode;
         const uavCode = payload.uavCode;
         if (!missionId && !uavCode) return;
-        // 关联 missionCode：优先 missionId/code，其次根据已知任务的 assignedUavs
         const mission =
-          missions.find(m => m.missionCode === missionId || m.id?.toString() === missionId) ||
-          missions.find(m => (uavCode ? m.assignedUavs?.includes(uavCode) : false));
+          missionsRef.current.find(
+            m => m.missionCode === missionId || m.id?.toString() === missionId
+          ) ||
+          missionsRef.current.find(m => (uavCode ? m.assignedUavs?.includes(uavCode) : false));
         if (!mission) return;
         setTelemetryMap(prev => ({
           ...prev,
@@ -86,8 +89,7 @@ function Monitoring() {
     });
     wsRef.current = client;
     return () => client.deactivate();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [missions]);
+  }, []);
 
   const activeMission = useMemo(
     () => missions.find(m => m.missionCode === activeMissionCode),

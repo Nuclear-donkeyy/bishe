@@ -18,4 +18,5 @@ public record MissionDto(
     List<List<Double>> route,
     List<String> milestones,
     List<String> metrics,
-    List<String> assignedUavs) {}
+    List<String> assignedUavs,
+    Long ruleId) {}

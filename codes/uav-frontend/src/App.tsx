@@ -8,6 +8,7 @@ import PersonnelManagement from './pages/PersonnelManagement';
 import Login from './pages/Login';
 import DataAnalytics from './pages/DataAnalytics';
 import ConfigCenter from './pages/ConfigCenter';
+import AlertsCenter from './pages/AlertsCenter';
 import { useAuth } from './context/AuthContext';
 
 function App() {
@@ -36,6 +37,9 @@ function App() {
         ) : null}
         {currentUser.role === 'superadmin' ? (
           <Route path="/config-center" element={<ConfigCenter />} />
+        ) : null}
+        {currentUser.role === 'superadmin' ? (
+          <Route path="/alerts" element={<AlertsCenter />} />
         ) : null}
       </Route>
       <Route path="/login" element={<Navigate to="/dashboard" replace />} />

@@ -10,6 +10,8 @@ import com.example.uavbackend.fleet.UavDeviceMapper;
 import com.example.uavbackend.mission.dto.MissionCreateRequest;
 import com.example.uavbackend.mission.dto.MissionDto;
 import com.example.uavbackend.mqtt.MqttCommandPublisher;
+import com.example.uavbackend.alert.AlertRule;
+import com.example.uavbackend.alert.AlertRuleMapper;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
@@ -34,6 +36,7 @@ public class MissionService {
   private final MissionQueueService missionQueueService;
   private final SimpMessagingTemplate messagingTemplate;
   private final MqttCommandPublisher mqttCommandPublisher;
+  private final AlertRuleMapper alertRuleMapper;
 
   public List<MissionDto> list(List<String> statuses) {
     LambdaQueryWrapper<Mission> wrapper = new LambdaQueryWrapper<>();
@@ -60,6 +63,13 @@ public class MissionService {
     mission.setMissionType(request.missionType());
     mission.setPilotName(pilot.getName());
     mission.setPriority(request.priority());
+    if (request.ruleId() != null) {
+      AlertRule rule = alertRuleMapper.selectById(request.ruleId());
+      if (rule == null) {
+        throw new IllegalArgumentException("报警规则不存在");
+      }
+      mission.setRuleId(rule.getId());
+    }
     mission.setProgress(0);
     List<UavDevice> assignedDevices = findAssignedDevices(request.assignedUavs());
     mission.setStatus(MissionStatus.QUEUE.name());
@@ -149,7 +159,8 @@ public class MissionService {
             .collect(Collectors.toList()),
         JsonUtils.fromJsonArray(entity.getMilestones()),
         JsonUtils.fromJsonArray(entity.getMetrics()),
-        assignedUavCodes);
+        assignedUavCodes,
+        entity.getRuleId());
   }
 
   private MissionDto toDtoWithRoute(Mission mission) {

@@ -4,7 +4,8 @@ import {
   RadarChartOutlined,
   RocketOutlined,
   TeamOutlined,
-  ProfileOutlined
+  ProfileOutlined,
+  AlertOutlined
 } from '@ant-design/icons';
 import { Button, Layout, Menu, Space, Typography } from 'antd';
 import type { MenuProps } from 'antd';
@@ -30,6 +31,7 @@ function MainLayout() {
     if (currentUser?.role === 'superadmin') {
       base.push({ key: '/personnel', icon: <TeamOutlined />, label: '人员管理' });
       base.push({ key: '/config-center', icon: <ProfileOutlined />, label: '任务与指标配置' });
+      base.push({ key: '/alerts', icon: <AlertOutlined />, label: '报警规则管理' });
     }
     return base;
   }, [currentUser?.role]);

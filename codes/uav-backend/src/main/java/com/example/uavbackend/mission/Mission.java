@@ -19,4 +19,5 @@ public class Mission extends BaseEntity {
   private String colorHex;
   private String metrics;
   private String milestones;
+  private Long ruleId;
 }

@@ -84,6 +84,7 @@ export interface MissionDto {
   milestones?: string[];
   metrics?: string[];
   assignedUavs?: string[];
+   ruleId?: number;
 }
 
 export interface MissionStatusPayload {
@@ -102,6 +103,7 @@ export const missionApi = {
     milestones?: string[];
     route: number[][];
     assignedUavs?: string[];
+    ruleId?: number;
   }) => http.post<MissionDto>('/missions', payload).then(r => ensureSuccess<MissionDto>(r.data, '创建任务失败')),
   updateProgress: (code: string, payload: { progress: number }) =>
     http.patch<MissionDto>(`/missions/${code}`, payload).then(r => r.data),
@@ -234,5 +236,49 @@ export const configApi = {
         }
         return;
       })
+  }
+};
+
+// Alerts
+export interface AlertCondition {
+  id?: number;
+  metricCode: string;
+  comparator: 'GT' | 'GTE' | 'LT' | 'LTE' | 'EQ' | string;
+  threshold: number;
+}
+
+export interface AlertRule {
+  id: number;
+  name: string;
+  description?: string;
+  logicOperator: 'AND' | 'OR';
+  conditions: AlertCondition[];
+  unreadCount: number;
+}
+
+export interface AlertRecord {
+  id: number;
+  ruleId: number;
+  missionCode?: string;
+  uavCode?: string;
+  metricCode?: string;
+  metricValue?: number;
+  triggeredAt?: string;
+  processed: boolean;
+}
+
+export const alertApi = {
+  rules: {
+    list: () => http.get<AlertRule[]>('/alerts/rules').then(r => r.data),
+    create: (payload: { name: string; description?: string; logicOperator: string; conditions: AlertCondition[] }) =>
+      http.post<AlertRule>('/alerts/rules', payload).then(r => ensureSuccess<AlertRule>(r.data, '创建报警规则失败')),
+    update: (id: number, payload: { name: string; description?: string; logicOperator: string; conditions: AlertCondition[] }) =>
+      http.put<AlertRule>(`/alerts/rules/${id}`, payload).then(r => ensureSuccess<AlertRule>(r.data, '更新报警规则失败')),
+    delete: (id: number) => http.delete(`/alerts/rules/${id}`).then(() => void 0)
+  },
+  records: {
+    list: (ruleId?: number) =>
+      http.get<AlertRecord[]>('/alerts/records', { params: { ruleId } }).then(r => r.data),
+    process: (id: number) => http.put(`/alerts/records/${id}/process`).then(() => void 0)
   }
 };

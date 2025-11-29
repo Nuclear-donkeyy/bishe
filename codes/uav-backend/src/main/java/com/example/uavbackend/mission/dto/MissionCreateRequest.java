@@ -16,4 +16,5 @@ public record MissionCreateRequest(
     @NotBlank String priority,
     List<String> milestones,
     @NotEmpty List<List<Double>> route,
-    List<String> assignedUavs) {}
+    List<String> assignedUavs,
+    Long ruleId) {}
