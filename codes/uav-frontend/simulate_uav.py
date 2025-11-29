@@ -124,7 +124,21 @@ class UavSimulator:
         try:
             while True:
                 with self.lock:
-                    self._step_route()
+                    # 在 RETURNING 时每轮都检查是否回到起点，距离小于 1 米则视为返航成功并停止移动
+                    if self.state == "RETURNING":
+                        if self.route:
+                            home_lat, home_lng = self.route[0]
+                            dist_home_m = math.hypot(self.lat - home_lat, self.lng - home_lng) * 111_000
+                            if dist_home_m < 1.0:
+                                self.state = "IDLE"
+                                self.mission_id = None
+                                self.route = []
+                                self.route_index = 0
+                        else:
+                            self.state = "IDLE"
+                            self.mission_id = None
+                    if self.state != "IDLE":
+                        self._step_route()
                     payload = self._build_payload()
                 self.client.publish(self.topic_telemetry, json.dumps(payload), qos=0)
                 time.sleep(self.interval)

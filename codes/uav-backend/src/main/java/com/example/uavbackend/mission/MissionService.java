@@ -9,6 +9,7 @@ import com.example.uavbackend.fleet.UavDevice;
 import com.example.uavbackend.fleet.UavDeviceMapper;
 import com.example.uavbackend.mission.dto.MissionCreateRequest;
 import com.example.uavbackend.mission.dto.MissionDto;
+import com.example.uavbackend.mqtt.MqttCommandPublisher;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
@@ -16,12 +17,14 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class MissionService {
   private final MissionMapper missionMapper;
   private final MissionRoutePointMapper routePointMapper;
@@ -30,6 +33,7 @@ public class MissionService {
   private final UserMapper userMapper;
   private final MissionQueueService missionQueueService;
   private final SimpMessagingTemplate messagingTemplate;
+  private final MqttCommandPublisher mqttCommandPublisher;
 
   public List<MissionDto> list(List<String> statuses) {
     LambdaQueryWrapper<Mission> wrapper = new LambdaQueryWrapper<>();
@@ -94,6 +98,17 @@ public class MissionService {
       mission.setStatus(MissionStatus.INTERRUPTED.name());
       missionMapper.updateById(mission);
       missionQueueService.removeFromQueue(mission.getMissionCode());
+      // push interrupt command to assigned UAVs
+      List<String> uavCodes = findAssignedUavCodes(mission.getId());
+      for (String code : uavCodes) {
+        try {
+          mqttCommandPublisher.publish(
+              code, java.util.Map.of("type", "interrupt", "missionCode", missionCode));
+          log.info("Sent interrupt to UAV {} for mission {}", code, missionCode);
+        } catch (Exception e) {
+          log.warn("Failed to send interrupt to UAV {} for mission {}", code, missionCode, e);
+        }
+      }
       pushStatusUpdate(mission);
     }
   }

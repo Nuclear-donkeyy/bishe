@@ -170,13 +170,13 @@ public class MissionQueueService {
     if (StringUtils.hasText(missionId)) {
       if ("EXECUTING".equals(upper) || "RUNNING".equals(upper)) {
         markMissionById(missionId, MissionStatus.RUNNING);
-      } else if ("RETURNING".equals(upper)) {
+      } else if ("RETURNING".equals(upper) || "IDLE".equals(upper)) {
         markMissionById(missionId, MissionStatus.COMPLETED);
       }
     } else if (StringUtils.hasText(upper)) {
       if ("EXECUTING".equals(upper) || "RUNNING".equals(upper)) {
         markMissionByUav(uavCode, MissionStatus.RUNNING);
-      } else if ("RETURNING".equals(upper)) {
+      } else if ("RETURNING".equals(upper) || "IDLE".equals(upper)) {
         markMissionByUav(uavCode, MissionStatus.COMPLETED);
       }
     }
