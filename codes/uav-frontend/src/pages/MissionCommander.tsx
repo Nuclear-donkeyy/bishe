@@ -518,7 +518,6 @@ function MissionCommander() {
                   ? monitoringMission.assignedUavs.join(', ')
                   : 'Not assigned'}
               </Descriptions.Item>
-              <Descriptions.Item label="Progress">{monitoringMission.progress ?? 0}%</Descriptions.Item>
             </Descriptions>
             {['QUEUE', 'RUNNING'].includes((monitoringMission.status || '').toUpperCase()) ? (
               <Button danger onClick={() => handleInterruptMission(monitoringMission)}>中断任务</Button>
