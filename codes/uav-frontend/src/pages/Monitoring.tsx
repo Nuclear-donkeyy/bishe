@@ -1,347 +1,222 @@
-import { DeleteOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons';
+import { AlertOutlined, ReloadOutlined } from '@ant-design/icons';
 import {
   Badge,
-  Button,
   Card,
   Col,
-  Descriptions,
-  Form,
-  Input,
-  Modal,
+  Empty,
   Row,
   Space,
-  Statistic,
   Table,
   Tag,
+  Tooltip,
   Typography,
-  Select,
-  message
+  message,
+  Button
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { useEffect, useMemo, useState } from 'react';
-import type { MonitoringTask, Rule, MissionTypeKey } from '../data/mock';
-import { monitoringTasks as initialTasks } from '../data/mock';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { connectTelemetrySocket } from '../services/ws';
+import {
+  configApi,
+  missionApi,
+  type MetricItem,
+  type MissionDto,
+  type MissionTypeItem
+} from '../services/api';
 
-const videoMissionTypes = new Set<MissionTypeKey>([
-  '森林火情巡查',
-  '林业健康监测',
-  '土地利用变化复拍'
-]);
-
-const keyMetricsMap: Partial<Record<MissionTypeKey, string[]>> = {
-  森林火情巡查: ['地表温度', '烟雾概率', '风速'],
-  林业健康监测: ['NDVI 平均值', '病害疑似面积'],
-  土地利用变化复拍: ['变化区域', '疑似类型'],
-  城市热岛监测: ['地表温度', '昼夜温差'],
-  空气质量剖面: ['PM2.5', 'PM10', '氧气浓度', '二氧化碳']
-};
+type TelemetryByMission = Record<
+  string,
+  {
+    data?: Record<string, any>;
+    ts?: number;
+  }
+>;
 
 function Monitoring() {
-  const [tasks, setTasks] = useState<MonitoringTask[]>(initialTasks);
-  const [activeTaskId, setActiveTaskId] = useState(
-    initialTasks.find(task => task.status === '执行中')?.id ?? ''
-  );
-  const [ruleModalOpen, setRuleModalOpen] = useState(false);
-  const [editingRule, setEditingRule] = useState<{ taskId: string; rule?: Rule } | null>(null);
-  const [ruleForm] = Form.useForm<Rule>();
+  const [missions, setMissions] = useState<MissionDto[]>([]);
+  const [activeMissionCode, setActiveMissionCode] = useState<string>('');
+  const [missionTypes, setMissionTypes] = useState<MissionTypeItem[]>([]);
+  const [metrics, setMetrics] = useState<MetricItem[]>([]);
+  const [telemetryMap, setTelemetryMap] = useState<TelemetryByMission>({});
+  const wsRef = useRef<{ deactivate: () => void } | null>(null);
+  const [loading, setLoading] = useState(false);
 
-  const executingTasks = useMemo(
-    () => tasks.filter(task => task.status === '执行中'),
-    [tasks]
-  );
-
-  const activeTask = useMemo(
-    () => executingTasks.find(task => task.id === activeTaskId),
-    [executingTasks, activeTaskId]
-  );
+  const loadBase = async () => {
+    try {
+      setLoading(true);
+      const [ms, mts, mets] = await Promise.all([
+        missionApi.list({ status: ['RUNNING'] }),
+        configApi.missionTypes.list(),
+        configApi.metrics.list()
+      ]);
+      setMissions(ms);
+      setMissionTypes((mts as MissionTypeItem[]) || []);
+      setMetrics((mets as MetricItem[]) || []);
+      if (ms.length && !activeMissionCode) {
+        setActiveMissionCode(ms[0].missionCode);
+      }
+    } catch (e: any) {
+      message.error(e?.message || '加载运行中任务失败');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    if (!executingTasks.length) {
-      setActiveTaskId('');
-      return;
-    }
-    if (!executingTasks.some(task => task.id === activeTaskId)) {
-      setActiveTaskId(executingTasks[0].id);
-    }
-  }, [executingTasks, activeTaskId]);
+    loadBase();
+    const client = connectTelemetrySocket({
+      onMessage: payload => {
+        if (!payload) return;
+        const missionId = payload.missionId || payload.missionCode;
+        const uavCode = payload.uavCode;
+        if (!missionId && !uavCode) return;
+        // 关联 missionCode：优先 missionId/code，其次根据已知任务的 assignedUavs
+        const mission =
+          missions.find(m => m.missionCode === missionId || m.id?.toString() === missionId) ||
+          missions.find(m => (uavCode ? m.assignedUavs?.includes(uavCode) : false));
+        if (!mission) return;
+        setTelemetryMap(prev => ({
+          ...prev,
+          [mission.missionCode]: {
+            data: payload.data,
+            ts: Date.now()
+          }
+        }));
+      }
+    });
+    wsRef.current = client;
+    return () => client.deactivate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [missions]);
 
-  const dataColumns: ColumnsType<{ label: string; value: string; unit?: string }> = [
+  const activeMission = useMemo(
+    () => missions.find(m => m.missionCode === activeMissionCode),
+    [missions, activeMissionCode]
+  );
+
+  const metricDefs = useMemo(() => {
+    if (!activeMission) return [];
+    const type = missionTypes.find(mt => mt.displayName === activeMission.missionType);
+    const metricIds = type?.metricIds || [];
+    return metrics.filter(m => metricIds.includes(m.id));
+  }, [activeMission, missionTypes, metrics]);
+
+  const metricRows: { key: string; label: string; unit?: string; value: string }[] = useMemo(() => {
+    if (!activeMission) return [];
+    const data = telemetryMap[activeMission.missionCode]?.data || {};
+    return metricDefs.map(def => {
+      const val = data?.[def.metricCode];
+      return {
+        key: def.metricCode,
+        label: def.name,
+        unit: def.unit,
+        value: val === undefined || val === null ? '--' : String(val)
+      };
+    });
+  }, [activeMission, metricDefs, telemetryMap]);
+
+  const columns: ColumnsType<(typeof metricRows)[number]> = [
     { title: '指标', dataIndex: 'label', key: 'label' },
     {
-      title: '数值',
+      title: '当前值',
       dataIndex: 'value',
       key: 'value',
-      render: (value, record) => `${value}${record.unit ? ` ${record.unit}` : ''}`
+      render: (value, record) => (
+        <Space>
+          <span>{value}</span>
+          {record.unit ? <span style={{ color: '#999' }}>{record.unit}</span> : null}
+        </Space>
+      )
     }
   ];
 
-  const handleEditRule = (taskId: string, rule?: Rule) => {
-    setEditingRule({ taskId, rule });
-    setRuleModalOpen(true);
-    if (rule) {
-      ruleForm.setFieldsValue(rule);
-    } else {
-      ruleForm.resetFields();
-    }
-  };
-
-  const handleDeleteRule = (taskId: string, ruleId: string) => {
-    setTasks(prev =>
-      prev.map(task =>
-        task.id === taskId
-          ? { ...task, rules: task.rules.filter(rule => rule.id !== ruleId) }
-          : task
-      )
-    );
-    message.success('已删除规则');
-  };
-
-  const submitRule = () => {
-    if (!editingRule) return;
-    ruleForm
-      .validateFields()
-      .then(values => {
-        setTasks(prev =>
-          prev.map(task => {
-            if (task.id !== editingRule.taskId) return task;
-            const ruleId = editingRule.rule?.id ?? `RULE-${Date.now()}`;
-            const newRule: Rule = { ...values, id: ruleId };
-            const rules = editingRule.rule
-              ? task.rules.map(rule => (rule.id === ruleId ? newRule : rule))
-              : [...task.rules, newRule];
-            return { ...task, rules };
-          })
-        );
-        message.success(editingRule.rule ? '已更新规则' : '已新增规则');
-        setRuleModalOpen(false);
-        setEditingRule(null);
-        ruleForm.resetFields();
-      })
-      .catch(() => undefined);
-  };
-
-  const layoutHeight = 'calc(100vh - 220px)';
+  const runningMissions = useMemo(
+    () => missions.filter(m => (m.status || '').toUpperCase() === 'RUNNING'),
+    [missions]
+  );
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <Row gutter={[16, 16]} style={{ minHeight: layoutHeight }}>
-        <Col xs={24} lg={7} style={{ height: layoutHeight }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16, minHeight: '100vh' }}>
+      <Row gutter={[16, 16]} style={{ flex: 1, minHeight: '80vh', height: '100%' }}>
+        <Col xs={24} lg={7} style={{ height: '100%', display: 'flex' }}>
           <Card
             title="执行中任务"
-            style={{ height: '100%' }}
-            bodyStyle={{ display: 'flex', flexDirection: 'column', height: '100%', paddingBottom: 0 }}
+            style={{ width: '100%', height: '100%' }}
           >
-            <div style={{ flex: 1, overflow: 'auto' }}>
-              {executingTasks.length ? (
+            <div style={{ flex: 1, overflowY: 'auto' }}>
+              {runningMissions.length ? (
                 <Space direction="vertical" style={{ width: '100%' }}>
-                  {executingTasks.map(task => (
-                    <Card
-                      key={task.id}
-                      size="small"
-                      onClick={() => setActiveTaskId(task.id)}
-                      style={{
-                        cursor: 'pointer',
-                        borderColor: task.id === activeTaskId ? '#1677ff' : undefined
-                      }}
-                    >
-                      <Space direction="vertical" size={0}>
-                        <Space>
-                          <Typography.Text strong>{task.missionName}</Typography.Text>
-                          <Tag color="green">执行中</Tag>
+                  {runningMissions.map(m => {
+                    const active = m.missionCode === activeMissionCode;
+                    const lastTs = telemetryMap[m.missionCode]?.ts;
+                    return (
+                      <Card
+                        key={m.missionCode}
+                        size="small"
+                        onClick={() => setActiveMissionCode(m.missionCode)}
+                        style={{ cursor: 'pointer', borderColor: active ? '#1677ff' : undefined }}
+                      >
+                        <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                          <Space>
+                            <Typography.Text strong>{m.name}</Typography.Text>
+                            <Tag color="green">RUNNING</Tag>
+                          </Space>
+                          <Space size="small">
+                            <Tag>{m.missionType}</Tag>
+                            <Tag color="blue">优先级 {m.priority}</Tag>
+                          </Space>
+                          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                            UAV：{m.assignedUavs?.join(', ') || '--'}
+                          </Typography.Text>
+                          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                            遥测时间：{lastTs ? new Date(lastTs).toLocaleTimeString() : '--'}
+                          </Typography.Text>
                         </Space>
-                        <Space size="small">
-                          <Tag>{task.missionType}</Tag>
-                        </Space>
-                        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                          执行人：{task.owner} · 区域：{task.location} · 设备 {task.devices} 架
-                        </Typography.Text>
-                      </Space>
-                    </Card>
-                  ))}
+                      </Card>
+                    );
+                  })}
                 </Space>
               ) : (
-                <Card size="small" style={{ textAlign: 'center' }} bordered={false}>
-                  暂无执行中任务
-                </Card>
+                <Empty description="暂无运行中任务" />
               )}
             </div>
           </Card>
         </Col>
-        <Col xs={24} lg={17} style={{ height: layoutHeight }}>
-          {activeTask ? (
-            <div style={{ height: '100%', display: 'flex', flexDirection: 'column', gap: 16 }}>
-              <Card style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-                <Typography.Title level={4} style={{ marginBottom: 16 }}>
-                  {activeTask.missionName} · 数据展示
-                </Typography.Title>
-                {(() => {
-                  const keyMetricLabels = keyMetricsMap[activeTask.missionType] ?? [];
-                  const keyMetricData = activeTask.data.filter(item =>
-                    keyMetricLabels.includes(item.label)
-                  );
-                  const showVideo =
-                    videoMissionTypes.has(activeTask.missionType) && activeTask.videoUrl;
-                  return showVideo || keyMetricData.length ? (
-                    <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
-                      {showVideo ? (
-                        <Col xs={24} md={keyMetricData.length ? 12 : 24}>
-                          <Card size="small" title="实时回传视频">
-                            <video
-                              src={activeTask.videoUrl}
-                              controls
-                              autoPlay
-                              muted
-                              loop
-                              style={{ width: '100%', borderRadius: 8, background: '#000' }}
-                            />
-                          </Card>
-                        </Col>
-                      ) : null}
-                      {keyMetricData.length ? (
-                        <Col xs={24} md={showVideo ? 12 : 24}>
-                          <Card size="small" title="关键指标">
-                            <Row gutter={[12, 12]}>
-                              {keyMetricData.map(item => (
-                                <Col span={12} key={item.label}>
-                                  <Statistic
-                                    title={item.label}
-                                    value={item.value}
-                                    suffix={item.unit}
-                                    valueStyle={{ fontSize: 24 }}
-                                  />
-                                </Col>
-                              ))}
-                            </Row>
-                          </Card>
-                        </Col>
-                      ) : null}
-                    </Row>
-                  ) : null;
-                })()}
-                <Descriptions
-                  bordered
-                  column={2}
-                  style={{ marginTop: 16 }}
-                  size="small"
-                  items={[
-                    { key: 'owner', label: '责任人', children: activeTask.owner },
-                    { key: 'status', label: '状态', children: activeTask.status },
-                    { key: 'type', label: '任务类型', children: activeTask.missionType },
-                    { key: 'location', label: '区域', children: activeTask.location },
-                    { key: 'devices', label: '设备数', children: `${activeTask.devices} 架` }
-                  ]}
-                />
-              </Card>
-              <Card
-                title="告警规则"
-                extra={
-                  <Button
-                    type="primary"
-                    icon={<PlusOutlined />}
-                    onClick={() => handleEditRule(activeTask.id)}
-                  >
-                    新增
-                  </Button>
-                }
-                style={{ flex: 1, overflow: 'auto' }}
-              >
-                <Table<Rule>
-                  rowKey="id"
-                  dataSource={activeTask.rules}
+
+        <Col xs={24} lg={17} style={{ height: '100%', display: 'flex' }}>
+          <Card
+            title={
+              <Space>
+                <Typography.Text>实时指标</Typography.Text>
+              </Space>
+            }
+            style={{ height: '100%', width: '100%' }}
+          >
+            {activeMission ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, height: '100%', overflowY: 'auto' }}>
+                <Space wrap>
+                  <Typography.Text strong>{activeMission.name}</Typography.Text>
+                  <Tag>{activeMission.missionType}</Tag>
+                  <Badge
+                    status="processing"
+                    text={`UAV: ${activeMission.assignedUavs?.join(', ') || '--'}`}
+                  />
+                </Space>
+                <Table
+                  rowKey="key"
+                  dataSource={metricRows}
+                  columns={columns}
                   pagination={false}
-                  columns={[
-                    { title: '规则名称', dataIndex: 'name', key: 'name' },
-                    { title: '监测指标', dataIndex: 'metric', key: 'metric' },
-                    { title: '阈值', dataIndex: 'threshold', key: 'threshold' },
-                    {
-                      title: '等级',
-                      dataIndex: 'level',
-                      key: 'level',
-                      render: value => (
-                        <Badge
-                          status={
-                            value === '警报' ? 'error' : value === '预警' ? 'warning' : 'processing'
-                          }
-                          text={value}
-                        />
-                      )
-                    },
-                    {
-                      title: '操作',
-                      key: 'actions',
-                      render: (_, record) => (
-                        <Space>
-                          <Button
-                            type="text"
-                            icon={<EditOutlined />}
-                            onClick={() => handleEditRule(activeTask.id, record)}
-                          />
-                          <Button
-                            type="text"
-                            icon={<DeleteOutlined />}
-                            danger
-                            onClick={() => handleDeleteRule(activeTask.id, record.id)}
-                          />
-                        </Space>
-                      )
-                    }
-                  ]}
-                  locale={{
-                    emptyText: '暂无规则'
-                  }}
+                  locale={{ emptyText: '未配置指标或暂无遥测' }}
+                  size="middle"
                 />
-              </Card>
-            </div>
-          ) : (
-            <Card style={{ height: '100%' }}>暂无执行中任务</Card>
-          )}
+              </div>
+            ) : (
+              <Empty description="请选择运行中的任务" />
+            )}
+          </Card>
         </Col>
       </Row>
-
-      <Modal
-        title={editingRule?.rule ? '编辑规则' : '新增规则'}
-        open={ruleModalOpen}
-        onCancel={() => {
-          setRuleModalOpen(false);
-          setEditingRule(null);
-          ruleForm.resetFields();
-        }}
-        onOk={submitRule}
-        okText="保存"
-      >
-        <Form<Rule> layout="vertical" form={ruleForm}>
-          <Form.Item
-            name="name"
-            label="规则名称"
-            rules={[{ required: true, message: '请输入规则名称' }]}
-          >
-            <Input placeholder="如 高温告警" />
-          </Form.Item>
-          <Form.Item
-            name="metric"
-            label="监测指标"
-            rules={[{ required: true, message: '请输入指标' }]}
-          >
-            <Input placeholder="如 地表温度" />
-          </Form.Item>
-          <Form.Item
-            name="threshold"
-            label="阈值"
-            rules={[{ required: true, message: '请输入阈值说明' }]}
-          >
-            <Input placeholder="> 60°C & 5min" />
-          </Form.Item>
-          <Form.Item name="level" label="等级" rules={[{ required: true }]}>
-            <Select
-              options={[
-                { value: '提示', label: '提示' },
-                { value: '预警', label: '预警' },
-                { value: '警报', label: '警报' }
-              ]}
-            />
-          </Form.Item>
-        </Form>
-      </Modal>
     </div>
   );
 }

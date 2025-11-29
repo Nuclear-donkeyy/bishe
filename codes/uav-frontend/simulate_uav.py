@@ -18,6 +18,8 @@ class UavSimulator:
         self.battery = init_batt
         self.lat = init_lat
         self.lng = init_lng
+        self.home_lat = init_lat
+        self.home_lng = init_lng
         self.alt = 0.0
         self.state = "IDLE"  # IDLE / EXECUTING / RETURNING
         self.mission_id: Optional[str] = None
@@ -73,22 +75,33 @@ class UavSimulator:
     # Simulation step
     def _step_route(self):
         if self.state not in ("EXECUTING", "RETURNING") or not self.route:
-            return
-        if self.route_index >= len(self.route):
-            self.state = "RETURNING"
-            return
-        target_lat, target_lng = self.route[self.route_index]
+            # RETURNING 时如果没有航线也要回到 home
+            if self.state == "RETURNING":
+                target_lat, target_lng = self.home_lat, self.home_lng
+            else:
+                return
+        elif self.state == "RETURNING":
+            target_lat, target_lng = self.home_lat, self.home_lng
+        else:
+            if self.route_index >= len(self.route):
+                self.state = "RETURNING"
+                return
+            target_lat, target_lng = self.route[self.route_index]
         # 简单直线插值，移动 speed_mps 对应的大约经纬度偏移（粗略，够用）
         step_deg = self.speed_mps / 111_000  # 每度约111km
         dlat = target_lat - self.lat
         dlng = target_lng - self.lng
         dist = math.hypot(dlat, dlng)
         if dist < step_deg:
-            # 到达该航点
+            # 到达目标点
             self.lat, self.lng = target_lat, target_lng
-            self.route_index += 1
-            if self.route_index >= len(self.route):
-                self.state = "RETURNING"
+            if self.state == "RETURNING":
+                # 留给 run 循环检测是否回到 home 并切 IDLE
+                pass
+            else:
+                self.route_index += 1
+                if self.route_index >= len(self.route):
+                    self.state = "RETURNING"
         else:
             self.lat += dlat / dist * step_deg
             self.lng += dlng / dist * step_deg
@@ -126,17 +139,12 @@ class UavSimulator:
                 with self.lock:
                     # 在 RETURNING 时每轮都检查是否回到起点，距离小于 1 米则视为返航成功并停止移动
                     if self.state == "RETURNING":
-                        if self.route:
-                            home_lat, home_lng = self.route[0]
-                            dist_home_m = math.hypot(self.lat - home_lat, self.lng - home_lng) * 111_000
-                            if dist_home_m < 1.0:
-                                self.state = "IDLE"
-                                self.mission_id = None
-                                self.route = []
-                                self.route_index = 0
-                        else:
+                        dist_home_m = math.hypot(self.lat - self.home_lat, self.lng - self.home_lng) * 111_000
+                        if dist_home_m < 1.0:
                             self.state = "IDLE"
                             self.mission_id = None
+                            self.route = []
+                            self.route_index = 0
                     if self.state != "IDLE":
                         self._step_route()
                     payload = self._build_payload()
