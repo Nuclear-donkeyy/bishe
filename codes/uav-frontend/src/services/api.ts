@@ -151,13 +151,36 @@ export interface TaskExecutionDto {
   metrics: string;
 }
 
+export interface MissionDataRecord {
+  id: number;
+  missionId: number;
+  missionCode: string;
+  missionType: string;
+  pilotName?: string;
+  uavCode?: string;
+  operatorName?: string;
+  startTime?: string;
+  endTime?: string;
+  dataMax: Record<string, any>;
+  dataMin: Record<string, any>;
+  dataAvg: Record<string, any>;
+}
+
 export const analyticsApi = {
   definitions: (missionType?: string) =>
     http.get<AnalyticsDefinitionDto[]>('/analytics/definitions', { params: { missionType } }).then(r => r.data),
   executions: (missionType: string, from?: string, to?: string) =>
     http
       .get<TaskExecutionDto[]>('/analytics/task-executions', { params: { missionType, from, to } })
-      .then(r => r.data)
+      .then(r => r.data),
+  data: (params: {
+    missionType: string;
+    uavCode?: string;
+    operatorName?: string;
+    missionCode?: string;
+    from?: string;
+    to?: string;
+  }) => http.get<MissionDataRecord[]>('/analytics/data', { params }).then(r => r.data)
 };
 
 // Users

@@ -29,6 +29,7 @@ public class TelemetryStatusMonitor {
   private final AlertRuleMapper alertRuleMapper;
   private final AlertRuleConditionMapper conditionMapper;
   private final AlertRecordMapper recordMapper;
+  private final com.example.uavbackend.analytics.MissionDataAggregator dataAggregator;
   private final ObjectMapper objectMapper = new ObjectMapper();
 
   @Scheduled(fixedDelay = 1000)
@@ -51,6 +52,17 @@ public class TelemetryStatusMonitor {
         // 执行中任务的报警检测
         if ("EXECUTING".equalsIgnoreCase(status) && StringUtils.hasText(missionId)) {
           evaluateAlerts(uavCode, missionId, node.path("data"));
+          // 数据聚合：记录执行阶段的指标数据
+          Mission mission =
+              missionMapper.selectOne(
+                  new LambdaQueryWrapper<Mission>()
+                      .eq(Mission::getMissionCode, missionId)
+                      .or()
+                      .eq(Mission::getId, missionId));
+          if (mission != null && node.has("data") && node.get("data").isObject()) {
+            Map<String, Object> dataMap = objectMapper.convertValue(node.get("data"), Map.class);
+            dataAggregator.ingest(mission, uavCode, dataMap);
+          }
         }
       } catch (Exception ignored) {
       }

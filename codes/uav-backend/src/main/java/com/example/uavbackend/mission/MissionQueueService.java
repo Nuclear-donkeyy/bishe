@@ -41,6 +41,7 @@ public class MissionQueueService {
   private final TelemetryService telemetryService;
   private final MqttCommandPublisher mqttCommandPublisher;
   private final SimpMessagingTemplate messagingTemplate;
+  private final com.example.uavbackend.analytics.MissionDataAggregator dataAggregator;
 
   public void enqueue(Mission mission, List<List<Double>> route, List<UavDevice> devices, String priority) {
         MissionQueueItem item = new MissionQueueItem();
@@ -253,6 +254,10 @@ public class MissionQueueService {
     mission.setStatus(status.name());
     if (status == MissionStatus.COMPLETED) {
       mission.setProgress(100);
+      // 完成时生成数据采集记录
+      dataAggregator.complete(mission);
+    } else if (status == MissionStatus.INTERRUPTED || status == MissionStatus.QUEUE) {
+      dataAggregator.clear(missionCode);
     }
     missionMapper.updateById(mission);
     pushStatusUpdate(mission);
