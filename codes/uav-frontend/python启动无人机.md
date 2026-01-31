@@ -1,0 +1,1 @@
+python .\simulate_uav.py uav001 90 30.558372546498806 104.05033483137294 --sensors "SURFACE_TEMP,SMOKE_PROB"
