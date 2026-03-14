@@ -28,8 +28,15 @@ export type TelemetryStompClient = {
   deactivate: () => void;
 };
 
-const WS_URL = 'ws://localhost:8080/ws/uav-telemetry';
 const RECONNECT_DELAY = 4000;
+
+export function getTelemetryWebSocketUrl() {
+  if (typeof window === 'undefined') {
+    return 'ws://localhost:8080/ws/uav-telemetry';
+  }
+  const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+  return `${protocol}://${window.location.host}/ws/uav-telemetry`;
+}
 
 const parseStompFrame = (frame: string) => {
   const nullIndex = frame.indexOf('\0');
@@ -70,8 +77,9 @@ class StompWebSocketClient {
   }
 
   private startConnection() {
-    console.info('[WS] connecting to', WS_URL);
-    this.socket = new WebSocket(WS_URL);
+    const wsUrl = getTelemetryWebSocketUrl();
+    console.info('[WS] connecting to', wsUrl);
+    this.socket = new WebSocket(wsUrl);
 
     this.socket.onopen = () => {
       console.info('[WS] socket opened, sending CONNECT frame');

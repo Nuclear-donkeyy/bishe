@@ -34,7 +34,7 @@ import {
   type MissionStatusPayload,
   type AlertRule
 } from '../services/api';
-import { connectTelemetrySocket } from '../services/ws';
+import { connectTelemetrySocket, getTelemetryWebSocketUrl } from '../services/ws';
 
 const pointsEqual = (a: LatLngTuple, b: LatLngTuple) =>
   Math.abs(a[0] - b[0]) < 1e-6 && Math.abs(a[1] - b[1]) < 1e-6;
@@ -138,8 +138,7 @@ function MissionCommander() {
   }, []);
 
   useEffect(() => {
-    const WS_URL = 'ws://localhost:8080/ws/uav-telemetry';
-    const socket = new WebSocket(WS_URL);
+    const socket = new WebSocket(getTelemetryWebSocketUrl());
     missionWsRef.current = socket;
 
     const sendFrame = (command: string, headers: Record<string, string>) => {

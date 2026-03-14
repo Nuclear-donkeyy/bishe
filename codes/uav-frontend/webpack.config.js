@@ -1,6 +1,9 @@
 const path = require('path');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
 
+const backendTarget = process.env.BACKEND_TARGET || 'http://localhost:8080';
+const websocketTarget = backendTarget.replace(/^http/i, 'ws');
+
 module.exports = {
   entry: path.resolve(__dirname, 'src/index.tsx'),
   output: {
@@ -50,7 +53,21 @@ module.exports = {
     },
     historyApiFallback: true,
     hot: true,
-    port: 5173
+    host: '0.0.0.0',
+    port: 5173,
+    proxy: [
+      {
+        context: ['/api'],
+        target: backendTarget,
+        changeOrigin: true
+      },
+      {
+        context: ['/ws'],
+        target: websocketTarget,
+        ws: true,
+        changeOrigin: true
+      }
+    ]
   },
   plugins: [
     new HtmlWebpackPlugin({

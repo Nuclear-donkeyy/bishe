@@ -128,7 +128,8 @@ export const monitoringApi = {
     http.get<MonitoringTaskDto[]>('/monitoring/tasks', { params }).then(r => r.data),
   addRule: (taskCode: string, rule: { name: string; metric: string; threshold: string; level: string }) =>
     http.post(`/monitoring/tasks/${taskCode}/rules`, rule).then(r => ensureSuccess(r.data, '新增规则失败')),
-  deleteRule: (ruleId: number) => http.delete(`/monitoring/tasks/rules/${ruleId}`).then(() => void 0)
+  deleteRule: (taskCode: string, ruleId: number) =>
+    http.delete(`/monitoring/tasks/${taskCode}/rules/${ruleId}`).then(() => void 0)
 };
 
 // Analytics
