@@ -29,7 +29,9 @@ import * as echarts from 'echarts';
 import type { EChartsOption } from 'echarts';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  alertApi,
   analyticsApi,
+  type AlertRecord,
   type AnalyticsReplayDto,
   type AnalyticsReplayEventDto,
   type AnalyticsReplaySampleDto,
@@ -79,6 +81,44 @@ function formatMetric(value?: number | null, suffix = '', digits = 2) {
     return '--';
   }
   return `${value.toFixed(digits)}${suffix}`;
+}
+
+function formatDateTime(value?: string) {
+  return value ? dayjs(value).format('YYYY-MM-DD HH:mm:ss') : '--';
+}
+
+function formatMissionStatus(status?: string) {
+  if (!status) {
+    return '--';
+  }
+  if (status === 'COMPLETED') {
+    return '已完成';
+  }
+  if (status === 'RUNNING') {
+    return '运行中';
+  }
+  if (status === 'INTERRUPTED') {
+    return '已中断';
+  }
+  if (status === 'PREEMPTED') {
+    return '已抢占';
+  }
+  return status;
+}
+
+function renderProcessTag(processed: boolean) {
+  return processed ? <Tag color="default">已处理</Tag> : <Tag color="red">未处理</Tag>;
+}
+
+function renderLinkageTag(value?: string) {
+  if (!value) return <Tag>--</Tag>;
+  if (value === 'SUCCESS') return <Tag color="green">成功</Tag>;
+  if (value === 'PARTIAL') return <Tag color="gold">部分成功</Tag>;
+  if (value === 'FAILED') return <Tag color="red">失败</Tag>;
+  if (value === 'SKIPPED') return <Tag>跳过</Tag>;
+  if (value === 'PLACEHOLDER') return <Tag color="blue">占位发送</Tag>;
+  if (value === 'PENDING') return <Tag color="processing">处理中</Tag>;
+  return <Tag>{value}</Tag>;
 }
 
 function toNumber(value: any): number | null {
@@ -172,10 +212,12 @@ function DataAnalytics() {
   const [replayMetrics, setReplayMetrics] = useState<string[]>([]);
   const [replayData, setReplayData] = useState<AnalyticsReplayDto | null>(null);
   const [timeseriesData, setTimeseriesData] = useState<AnalyticsTimeSeriesDto | null>(null);
+  const [replayAlertRecords, setReplayAlertRecords] = useState<AlertRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [compareLoading, setCompareLoading] = useState(false);
   const [replayLoading, setReplayLoading] = useState(false);
   const [form] = Form.useForm<FilterForm>();
+  const replayAlertsRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     configApi.missionTypes
@@ -372,6 +414,8 @@ function DataAnalytics() {
       ]);
       setReplayData(replayResult || null);
       setTimeseriesData(timeseriesResult || null);
+      const alertRecords = await alertApi.records.list(undefined, [missionCode]);
+      setReplayAlertRecords(alertRecords || []);
       if ((!metrics || !metrics.length) && timeseriesResult?.series?.length) {
         setReplayMetrics(timeseriesResult.series.map(item => item.metricCode));
       }
@@ -402,6 +446,7 @@ function DataAnalytics() {
     if (!selectedReplayMission) {
       setReplayData(null);
       setTimeseriesData(null);
+      setReplayAlertRecords([]);
       return;
     }
     loadReplay(selectedReplayMission).catch(() => undefined);
@@ -620,20 +665,14 @@ function DataAnalytics() {
         precision: 0
       },
       {
-        title: '复盘任务状态',
-        value:
-          replayData?.status === 'COMPLETED'
-            ? 100
-            : replayData?.status === 'RUNNING'
-              ? 60
-              : replayData?.status === 'INTERRUPTED'
-                ? 30
-                : null,
-        suffix: '%',
-        precision: 0
+        title: '触发报警条数',
+        value: replayAlertRecords.length,
+        suffix: ' 条',
+        precision: 0,
+        clickable: true
       }
     ],
-    [replayData]
+    [replayAlertRecords.length, replayData]
   );
 
   const timeseriesChartOption = useMemo<EChartsOption | null>(() => {
@@ -668,45 +707,6 @@ function DataAnalytics() {
       })
     };
   }, [timeseriesData]);
-
-  const routeReplayOption = useMemo<EChartsOption | null>(() => {
-    if (!replayData || (!replayData.plannedRoute.length && !replayData.actualTrack.length)) {
-      return null;
-    }
-    return {
-      color: ['#94a3b8', '#0f766e'],
-      tooltip: { trigger: 'item' },
-      legend: { top: 0 },
-      grid: { left: 48, right: 20, top: 52, bottom: 36 },
-      xAxis: {
-        type: 'value',
-        name: '经度',
-        splitLine: { lineStyle: { color: '#e2e8f0' } }
-      },
-      yAxis: {
-        type: 'value',
-        name: '纬度',
-        splitLine: { lineStyle: { color: '#e2e8f0' } }
-      },
-      series: [
-        {
-          name: '计划航线',
-          type: 'line',
-          symbol: 'circle',
-          symbolSize: 8,
-          data: replayData.plannedRoute.map(point => [point.lng, point.lat]),
-          lineStyle: { width: 2, type: 'dashed' }
-        },
-        {
-          name: '实际轨迹',
-          type: 'line',
-          symbol: 'none',
-          lineStyle: { width: 3 },
-          data: replayData.actualTrack.map(point => [point.lng, point.lat])
-        }
-      ]
-    };
-  }, [replayData]);
 
   const rawSampleChartOption = useMemo<EChartsOption | null>(() => {
     if (!replayData?.samples?.length) {
@@ -818,6 +818,233 @@ function DataAnalytics() {
     ],
     []
   );
+
+  const replayAlertColumns = useMemo<ColumnsType<AlertRecord>>(
+    () => [
+      {
+        title: '触发时间',
+        dataIndex: 'triggeredAt',
+        key: 'triggeredAt',
+        width: 170,
+        render: value => formatDateTime(value)
+      },
+      {
+        title: '指标',
+        dataIndex: 'metricCode',
+        key: 'metricCode',
+        width: 130,
+        render: value => value || '--'
+      },
+      {
+        title: '触发值',
+        dataIndex: 'metricValue',
+        key: 'metricValue',
+        width: 120,
+        render: value => (value == null ? '--' : value)
+      },
+      {
+        title: '联动状态',
+        dataIndex: 'linkageStatus',
+        key: 'linkageStatus',
+        width: 120,
+        render: value => renderLinkageTag(value)
+      },
+      {
+        title: '通知状态',
+        dataIndex: 'notificationStatus',
+        key: 'notificationStatus',
+        width: 120,
+        render: value => renderLinkageTag(value)
+      },
+      {
+        title: '处理状态',
+        dataIndex: 'processed',
+        key: 'processed',
+        width: 100,
+        render: value => renderProcessTag(Boolean(value))
+      },
+      {
+        title: '联动摘要',
+        dataIndex: 'linkageSummary',
+        key: 'linkageSummary',
+        render: value => (
+          <Typography.Text style={{ maxWidth: 300 }} ellipsis={{ tooltip: value || '--' }}>
+            {value || '--'}
+          </Typography.Text>
+        )
+      }
+    ],
+    []
+  );
+
+  const scrollToReplayAlerts = () => {
+    replayAlertsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  const exportReplayCsv = () => {
+    if (!replayData) {
+      message.info('请先选择要导出的复盘任务');
+      return;
+    }
+    const rows: any[][] = [
+      ['任务名称', replayData.missionName],
+      ['任务编码', replayData.missionCode],
+      ['任务类型', replayData.missionType],
+      ['任务状态', formatMissionStatus(replayData.status)],
+      ['无人机', replayData.uavCode || '--'],
+      ['开始时间', formatDateTime(replayData.startTime)],
+      ['结束时间', formatDateTime(replayData.endTime)],
+      ['复盘时长(分钟)', replayData.durationMinutes ?? ''],
+      ['航线里程(km)', replayData.distanceKm ?? ''],
+      ['原始采样数', replayData.sampleCount ?? ''],
+      ['触发报警条数', replayAlertRecords.length],
+      [],
+      ['任务时间轴'],
+      ['时间', '类别', '事件', '详情'],
+      ...replayData.timeline.map(item => [
+        formatDateTime(item.occurredAt),
+        item.category,
+        item.title,
+        item.description || ''
+      ]),
+      [],
+      ['报警记录'],
+      ['触发时间', '指标', '触发值', '联动状态', '通知状态', '处理状态', '联动摘要'],
+      ...replayAlertRecords.map(item => [
+        formatDateTime(item.triggeredAt),
+        item.metricCode || '',
+        item.metricValue ?? '',
+        item.linkageStatus || '',
+        item.notificationStatus || '',
+        item.processed ? '已处理' : '未处理',
+        item.linkageSummary || ''
+      ]),
+      [],
+      ['原始采样'],
+      ['采样时间', '纬度', '经度', '高度(m)', '电量(%)', '速度(m/s)', '原始指标']
+    ];
+    replayData.samples.forEach(sample => {
+      rows.push([
+        formatDateTime(sample.reportedAt),
+        sample.lat ?? '',
+        sample.lng ?? '',
+        sample.altitude ?? '',
+        sample.batteryPercent ?? '',
+        sample.velocityMs ?? '',
+        sample.metrics && Object.keys(sample.metrics).length
+          ? Object.entries(sample.metrics)
+              .map(([key, value]) => `${key}: ${value}`)
+              .join(' | ')
+          : ''
+      ]);
+    });
+    const csv = `\ufeff${rows.map(row => row.map(escapeCsvCell).join(',')).join('\n')}`;
+    downloadFile(`replay-${replayData.missionCode}-${dayjs().format('YYYYMMDD-HHmmss')}.csv`, csv, 'text/csv;charset=utf-8;');
+  };
+
+  const exportReplayExcel = () => {
+    if (!replayData) {
+      message.info('请先选择要导出的复盘任务');
+      return;
+    }
+    const timelineRows = replayData.timeline
+      .map(
+        item => `
+          <tr>
+            <td>${formatDateTime(item.occurredAt)}</td>
+            <td>${item.category}</td>
+            <td>${item.title}</td>
+            <td>${item.description || ''}</td>
+          </tr>`
+      )
+      .join('');
+    const alertRows = replayAlertRecords
+      .map(
+        item => `
+          <tr>
+            <td>${formatDateTime(item.triggeredAt)}</td>
+            <td>${item.metricCode || ''}</td>
+            <td>${item.metricValue ?? ''}</td>
+            <td>${item.linkageStatus || ''}</td>
+            <td>${item.notificationStatus || ''}</td>
+            <td>${item.processed ? '已处理' : '未处理'}</td>
+            <td>${item.linkageSummary || ''}</td>
+          </tr>`
+      )
+      .join('');
+    const sampleRows = replayData.samples
+      .map(
+        sample => `
+          <tr>
+            <td>${formatDateTime(sample.reportedAt)}</td>
+            <td>${sample.lat ?? ''}</td>
+            <td>${sample.lng ?? ''}</td>
+            <td>${sample.altitude ?? ''}</td>
+            <td>${sample.batteryPercent ?? ''}</td>
+            <td>${sample.velocityMs ?? ''}</td>
+            <td>${
+              sample.metrics && Object.keys(sample.metrics).length
+                ? Object.entries(sample.metrics)
+                    .map(([key, value]) => `${key}: ${value}`)
+                    .join(' | ')
+                : ''
+            }</td>
+          </tr>`
+      )
+      .join('');
+    const html = `
+      <html xmlns:o="urn:schemas-microsoft-com:office:office"
+            xmlns:x="urn:schemas-microsoft-com:office:excel"
+            xmlns="http://www.w3.org/TR/REC-html40">
+      <head>
+        <meta charset="utf-8" />
+        <style>
+          body { font-family: Arial, sans-serif; }
+          table { border-collapse: collapse; margin-bottom: 16px; width: 100%; }
+          th, td { border: 1px solid #cbd5e1; padding: 6px 8px; }
+          th { background: #e2e8f0; }
+          h2 { margin: 16px 0 8px; }
+        </style>
+      </head>
+      <body>
+        <h2>任务复盘概览</h2>
+        <table>
+          <tr><th>字段</th><th>内容</th></tr>
+          <tr><td>任务名称</td><td>${replayData.missionName}</td></tr>
+          <tr><td>任务编码</td><td>${replayData.missionCode}</td></tr>
+          <tr><td>任务类型</td><td>${replayData.missionType}</td></tr>
+          <tr><td>任务状态</td><td>${formatMissionStatus(replayData.status)}</td></tr>
+          <tr><td>无人机</td><td>${replayData.uavCode || '--'}</td></tr>
+          <tr><td>开始时间</td><td>${formatDateTime(replayData.startTime)}</td></tr>
+          <tr><td>结束时间</td><td>${formatDateTime(replayData.endTime)}</td></tr>
+          <tr><td>复盘时长(分钟)</td><td>${replayData.durationMinutes ?? ''}</td></tr>
+          <tr><td>航线里程(km)</td><td>${replayData.distanceKm ?? ''}</td></tr>
+          <tr><td>原始采样数</td><td>${replayData.sampleCount ?? ''}</td></tr>
+          <tr><td>触发报警条数</td><td>${replayAlertRecords.length}</td></tr>
+        </table>
+        <h2>任务时间轴</h2>
+        <table>
+          <tr><th>时间</th><th>类别</th><th>事件</th><th>详情</th></tr>
+          ${timelineRows}
+        </table>
+        <h2>报警记录</h2>
+        <table>
+          <tr><th>触发时间</th><th>指标</th><th>触发值</th><th>联动状态</th><th>通知状态</th><th>处理状态</th><th>联动摘要</th></tr>
+          ${alertRows}
+        </table>
+        <h2>原始采样</h2>
+        <table>
+          <tr><th>采样时间</th><th>纬度</th><th>经度</th><th>高度(m)</th><th>电量(%)</th><th>速度(m/s)</th><th>原始指标</th></tr>
+          ${sampleRows}
+        </table>
+      </body>
+      </html>`;
+    downloadFile(
+      `replay-${replayData.missionCode}-${dayjs().format('YYYYMMDD-HHmmss')}.xls`,
+      html,
+      'application/vnd.ms-excel;charset=utf-8;'
+    );
+  };
 
   const exportCsv = () => {
     if (!data.length) {
@@ -1152,6 +1379,20 @@ function DataAnalytics() {
                   onChange={value => setReplayMetrics(value)}
                 />
                 <Button
+                  icon={<DownloadOutlined />}
+                  disabled={!replayData}
+                  onClick={exportReplayCsv}
+                >
+                  导出任务 CSV
+                </Button>
+                <Button
+                  icon={<DownloadOutlined />}
+                  disabled={!replayData}
+                  onClick={exportReplayExcel}
+                >
+                  导出任务 Excel
+                </Button>
+                <Button
                   icon={<ReloadOutlined />}
                   loading={replayLoading}
                   disabled={!selectedReplayMission}
@@ -1172,12 +1413,17 @@ function DataAnalytics() {
                   type="info"
                   showIcon
                   message={`${replayData.missionName} · ${replayData.missionCode}`}
-                  description={`任务类型 ${replayData.missionType}，无人机 ${replayData.uavCode || '--'}，复盘窗口 ${replayData.startTime ? dayjs(replayData.startTime).format('MM-DD HH:mm:ss') : '--'} ~ ${replayData.endTime ? dayjs(replayData.endTime).format('MM-DD HH:mm:ss') : '--'}`}
+                  description={`任务类型 ${replayData.missionType}，状态 ${formatMissionStatus(replayData.status)}，无人机 ${replayData.uavCode || '--'}，复盘窗口 ${replayData.startTime ? dayjs(replayData.startTime).format('MM-DD HH:mm:ss') : '--'} ~ ${replayData.endTime ? dayjs(replayData.endTime).format('MM-DD HH:mm:ss') : '--'}`}
                 />
                 <Row gutter={[16, 16]}>
                   {replaySummaryCards.map(item => (
                     <Col xs={24} sm={12} xl={6} key={item.title}>
-                      <Card size="small">
+                      <Card
+                        size="small"
+                        hoverable={Boolean(item.clickable)}
+                        onClick={item.clickable ? scrollToReplayAlerts : undefined}
+                        style={item.clickable ? { cursor: 'pointer' } : undefined}
+                      >
                         <Statistic
                           title={item.title}
                           value={item.value == null ? undefined : Number(item.value.toFixed(item.precision ?? 2))}
@@ -1189,21 +1435,12 @@ function DataAnalytics() {
                   ))}
                 </Row>
                 <Row gutter={[16, 16]}>
-                  <Col xs={24} xl={14}>
+                  <Col xs={24}>
                     <Card size="small" title="时序趋势回放">
                       {timeseriesChartOption ? (
                         <AnalyticsChart option={timeseriesChartOption} height={340} />
                       ) : (
                         <Empty description="当前任务暂无可绘制的指标曲线" />
-                      )}
-                    </Card>
-                  </Col>
-                  <Col xs={24} xl={10}>
-                    <Card size="small" title="航线与实际轨迹">
-                      {routeReplayOption ? (
-                        <AnalyticsChart option={routeReplayOption} height={340} />
-                      ) : (
-                        <Empty description="当前任务暂无轨迹数据" />
                       )}
                     </Card>
                   </Col>
@@ -1232,6 +1469,23 @@ function DataAnalytics() {
                     </Card>
                   </Col>
                 </Row>
+                <div ref={replayAlertsRef}>
+                  <Card
+                    size="small"
+                    title="任务报警记录"
+                    extra={<Tag color="red">共 {replayAlertRecords.length} 条</Tag>}
+                  >
+                    <Table
+                      rowKey="id"
+                      columns={replayAlertColumns}
+                      dataSource={replayAlertRecords}
+                      pagination={{ pageSize: 6, showSizeChanger: false }}
+                      size="small"
+                      scroll={{ x: 1080 }}
+                      locale={{ emptyText: '当前任务未触发报警记录' }}
+                    />
+                  </Card>
+                </div>
                 <Card size="small" title="原始采样明细">
                   <Table
                     rowKey={record => record.reportedAt}

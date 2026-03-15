@@ -47,10 +47,16 @@ public class AlertService {
         .toList();
   }
 
-  public List<AlertRecordDto> listRecords(Long ruleId) {
+  public List<AlertRecordDto> listRecords(Long ruleId, List<String> missionCodes) {
     LambdaQueryWrapper<AlertRecord> wrapper = new LambdaQueryWrapper<>();
     if (ruleId != null) {
       wrapper.eq(AlertRecord::getRuleId, ruleId);
+    }
+    if (missionCodes != null) {
+      List<String> normalizedMissionCodes = missionCodes.stream().filter(code -> code != null && !code.isBlank()).distinct().toList();
+      if (!normalizedMissionCodes.isEmpty()) {
+        wrapper.in(AlertRecord::getMissionCode, normalizedMissionCodes);
+      }
     }
     wrapper.orderByDesc(AlertRecord::getTriggeredAt);
     return recordMapper.selectList(wrapper).stream().map(this::toRecordDto).toList();

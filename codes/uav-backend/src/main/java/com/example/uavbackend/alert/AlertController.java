@@ -43,8 +43,10 @@ public class AlertController {
   }
 
   @GetMapping("/records")
-  public List<AlertRecordDto> listRecords(@RequestParam(value = "ruleId", required = false) Long ruleId) {
-    return alertService.listRecords(ruleId);
+  public List<AlertRecordDto> listRecords(
+      @RequestParam(value = "ruleId", required = false) Long ruleId,
+      @RequestParam(value = "missionCodes", required = false) List<String> missionCodes) {
+    return alertService.listRecords(ruleId, missionCodes);
   }
 
   @PutMapping("/records/{id}/process")

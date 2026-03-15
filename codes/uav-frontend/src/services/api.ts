@@ -429,8 +429,8 @@ export const alertApi = {
     delete: (id: number) => http.delete(`/alerts/rules/${id}`).then(() => void 0)
   },
   records: {
-    list: (ruleId?: number) =>
-      http.get<AlertRecord[]>('/alerts/records', { params: { ruleId } }).then(r => r.data),
+    list: (ruleId?: number, missionCodes?: string[]) =>
+      http.get<AlertRecord[]>('/alerts/records', { params: { ruleId, missionCodes } }).then(r => r.data),
     process: (id: number) => http.put(`/alerts/records/${id}/process`).then(() => void 0)
   }
 };

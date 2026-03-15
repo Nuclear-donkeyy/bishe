@@ -24,10 +24,12 @@ import { useEffect, useState } from 'react';
 import {
   alertApi,
   configApi,
+  missionApi,
   type AlertCondition,
   type AlertRecord,
   type AlertRule,
-  type MetricItem
+  type MetricItem,
+  type MissionDto
 } from '../services/api';
 
 type ConfigMode = 'template' | 'rule';
@@ -53,7 +55,9 @@ function AlertsCenter() {
   const [rules, setRules] = useState<AlertRule[]>([]);
   const [records, setRecords] = useState<AlertRecord[]>([]);
   const [metrics, setMetrics] = useState<MetricItem[]>([]);
+  const [missions, setMissions] = useState<MissionDto[]>([]);
   const [activeRuleId, setActiveRuleId] = useState<number | null>(null);
+  const [recordMissionCodes, setRecordMissionCodes] = useState<string[]>([]);
   const [configMode, setConfigMode] = useState<ConfigMode>('rule');
   const [editorMode, setEditorMode] = useState<ConfigMode>('rule');
   const [modalOpen, setModalOpen] = useState(false);
@@ -83,10 +87,10 @@ function AlertsCenter() {
     }
   };
 
-  const loadRecords = async (ruleId?: number) => {
+  const loadRecords = async (ruleId?: number, missionCodes?: string[]) => {
     try {
       setLoadingRecords(true);
-      const data = await alertApi.records.list(ruleId);
+      const data = await alertApi.records.list(ruleId, missionCodes);
       setRecords(data);
     } catch (e: any) {
       message.error(e?.message || '加载报警记录失败');
@@ -100,21 +104,26 @@ function AlertsCenter() {
       .list()
       .then(res => setMetrics((res as MetricItem[]) || []))
       .catch(() => setMetrics([]));
+    missionApi.list().then(setMissions).catch(() => setMissions([]));
     loadRules();
   }, []);
 
   useEffect(() => {
     if (activeRuleId != null) {
-      loadRecords(activeRuleId);
+      loadRecords(activeRuleId, recordMissionCodes);
     } else {
       setRecords([]);
     }
-  }, [activeRuleId]);
+  }, [activeRuleId, recordMissionCodes]);
 
   const metricOptions = metrics.map(metric => ({ label: `${metric.name} (${metric.metricCode})`, value: metric.metricCode }));
   const templateOptions = templates.map(template => ({
     label: template.templateCategory ? `${template.name} · ${template.templateCategory}` : template.name,
     value: template.id
+  }));
+  const missionOptions = missions.map(item => ({
+    label: `${item.name} · ${item.missionCode}`,
+    value: item.missionCode
   }));
 
   const resetModal = () => {
@@ -231,7 +240,7 @@ function AlertsCenter() {
   const handleProcessRecord = async (id: number) => {
     await alertApi.records.process(id);
     message.success('已标记处理');
-    loadRecords(activeRuleId ?? undefined);
+    loadRecords(activeRuleId ?? undefined, recordMissionCodes);
     loadRules();
   };
 
@@ -405,6 +414,18 @@ function AlertsCenter() {
                 style={{ flex: 1 }}
                 bodyStyle={{ height: '100%', display: 'flex', flexDirection: 'column' }}
                 loading={loadingRecords}
+                extra={
+                  <Select
+                    mode="multiple"
+                    allowClear
+                    maxTagCount={2}
+                    style={{ minWidth: 320 }}
+                    placeholder="按单个或多个任务筛选报警记录"
+                    value={recordMissionCodes}
+                    options={missionOptions}
+                    onChange={value => setRecordMissionCodes(value)}
+                  />
+                }
               >
                 {activeRuleId ? (
                   <Table
