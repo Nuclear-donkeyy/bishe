@@ -7,6 +7,15 @@ public record AlertRuleDto(
     String name,
     String description,
     String logicOperator,
+    Boolean templateEnabled,
+    Long templateId,
+    String templateName,
+    String templateCode,
+    String templateCategory,
+    Boolean autoInterrupt,
+    Boolean notifyEnabled,
+    String notifyChannels,
+    String notifyTargets,
+    String notifyTemplate,
     List<ConditionDto> conditions,
     int unreadCount) {}
-

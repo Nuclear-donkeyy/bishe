@@ -3,6 +3,7 @@ package com.example.uavbackend.mission;
 import com.example.uavbackend.fleet.TelemetryService;
 import com.example.uavbackend.alert.AlertRecord;
 import com.example.uavbackend.alert.AlertRecordMapper;
+import com.example.uavbackend.alert.AlertLinkageService;
 import com.example.uavbackend.alert.AlertRule;
 import com.example.uavbackend.alert.AlertRuleCondition;
 import com.example.uavbackend.alert.AlertRuleConditionMapper;
@@ -29,6 +30,7 @@ public class TelemetryStatusMonitor {
   private final AlertRuleMapper alertRuleMapper;
   private final AlertRuleConditionMapper conditionMapper;
   private final AlertRecordMapper recordMapper;
+  private final AlertLinkageService alertLinkageService;
   private final com.example.uavbackend.analytics.MissionDataAggregator dataAggregator;
   private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -120,7 +122,10 @@ public class TelemetryStatusMonitor {
       record.setMetricValue(extractNumber(dataNode, matchedCond.getMetricCode()));
       record.setTriggeredAt(LocalDateTime.now());
       record.setProcessed(false);
+      record.setLinkageStatus("PENDING");
+      record.setNotificationStatus(Boolean.TRUE.equals(rule.getNotifyEnabled()) ? "PENDING" : "SKIPPED");
       recordMapper.insert(record);
+      alertLinkageService.execute(rule, record, mission, matchedCond);
       log.info("Alert triggered rule={} mission={} uav={} metric={}", rule.getId(), mission.getMissionCode(), uavCode, matchedCond.getMetricCode());
     }
   }

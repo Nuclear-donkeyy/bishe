@@ -101,7 +101,10 @@ function MissionCommander() {
     missionApi.types().then(setMissionTypes).catch(() => setMissionTypes([]));
     fleetApi.available().then(setAvailableUavs).catch(() => setAvailableUavs([]));
     userApi.list().then(setUsers).catch(() => setUsers([]));
-    alertApi.rules.list().then(setAlertRules).catch(() => setAlertRules([]));
+    alertApi.rules
+      .list()
+      .then(data => setAlertRules(data.filter(rule => !rule.templateEnabled)))
+      .catch(() => setAlertRules([]));
     const telemetryClient = connectTelemetrySocket({
       onMessage: payload => {
         if (!payload || !payload.uavCode) return;
@@ -623,7 +626,10 @@ function MissionCommander() {
             <Select
               allowClear
               placeholder="可选，选择则启用报警规则"
-              options={alertRules.map(r => ({ label: r.name, value: r.id }))}
+              options={alertRules.map(r => ({
+                label: r.templateName ? `${r.name} · 继承 ${r.templateName}` : r.name,
+                value: r.id
+              }))}
             />
           </Form.Item>
           <Form.Item label="航线规划">

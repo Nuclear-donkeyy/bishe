@@ -10,5 +10,7 @@ public record AlertRecordDto(
     String metricCode,
     Double metricValue,
     LocalDateTime triggeredAt,
-    Boolean processed) {}
-
+    Boolean processed,
+    String linkageStatus,
+    String linkageSummary,
+    String notificationStatus) {}

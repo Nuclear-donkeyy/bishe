@@ -64,6 +64,14 @@ public class MissionService {
     mission.setPilotName(pilot.getName());
     mission.setPriority(request.priority());
     if (request.ruleId() != null) {
+      Long templateRuleCount =
+          alertRuleMapper.selectCount(
+              new LambdaQueryWrapper<AlertRule>()
+                  .eq(AlertRule::getId, request.ruleId())
+                  .eq(AlertRule::getTemplateEnabled, true));
+      if (templateRuleCount != null && templateRuleCount > 0) {
+        throw new IllegalArgumentException("任务只能绑定普通规则，不能直接绑定规则模板");
+      }
       AlertRule rule = alertRuleMapper.selectById(request.ruleId());
       if (rule == null) {
         throw new IllegalArgumentException("报警规则不存在");

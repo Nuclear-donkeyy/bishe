@@ -20,6 +20,11 @@ public class AlertController {
     return alertService.listRules();
   }
 
+  @GetMapping("/library")
+  public List<AlertRuleDto> listTemplateLibrary() {
+    return alertService.listTemplates();
+  }
+
   @PostMapping("/rules")
   public ResponseEntity<AlertRuleDto> createRule(@Valid @RequestBody AlertRuleCreateRequest req) {
     return ResponseEntity.status(201).body(alertService.createRule(req));

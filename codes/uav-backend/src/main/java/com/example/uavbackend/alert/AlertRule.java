@@ -16,7 +16,15 @@ public class AlertRule {
   private String description;
   /** AND / OR */
   private String logicOperator;
+  private Boolean templateEnabled;
+  private Long templateId;
+  private String templateCode;
+  private String templateCategory;
+  private Boolean autoInterrupt;
+  private Boolean notifyEnabled;
+  private String notifyChannels;
+  private String notifyTargets;
+  private String notifyTemplate;
   private LocalDateTime createdAt;
   private LocalDateTime updatedAt;
 }
-

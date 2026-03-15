@@ -20,5 +20,7 @@ public class AlertRecord {
   private LocalDateTime triggeredAt;
   private Boolean processed;
   private LocalDateTime processedAt;
+  private String linkageStatus;
+  private String linkageSummary;
+  private String notificationStatus;
 }
-

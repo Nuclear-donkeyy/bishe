@@ -276,6 +276,16 @@ export interface AlertRule {
   name: string;
   description?: string;
   logicOperator: 'AND' | 'OR';
+  templateEnabled: boolean;
+  templateId?: number;
+  templateName?: string;
+  templateCode?: string;
+  templateCategory?: string;
+  autoInterrupt: boolean;
+  notifyEnabled: boolean;
+  notifyChannels?: string;
+  notifyTargets?: string;
+  notifyTemplate?: string;
   conditions: AlertCondition[];
   unreadCount: number;
 }
@@ -289,14 +299,33 @@ export interface AlertRecord {
   metricValue?: number;
   triggeredAt?: string;
   processed: boolean;
+  linkageStatus?: string;
+  linkageSummary?: string;
+  notificationStatus?: string;
+}
+
+export interface AlertRulePayload {
+  name: string;
+  description?: string;
+  logicOperator: string;
+  templateEnabled?: boolean;
+  templateId?: number;
+  templateCode?: string;
+  templateCategory?: string;
+  autoInterrupt?: boolean;
+  notifyEnabled?: boolean;
+  notifyChannels?: string;
+  notifyTargets?: string;
+  notifyTemplate?: string;
+  conditions: AlertCondition[];
 }
 
 export const alertApi = {
   rules: {
     list: () => http.get<AlertRule[]>('/alerts/rules').then(r => r.data),
-    create: (payload: { name: string; description?: string; logicOperator: string; conditions: AlertCondition[] }) =>
+    create: (payload: AlertRulePayload) =>
       http.post<AlertRule>('/alerts/rules', payload).then(r => ensureSuccess<AlertRule>(r.data, '创建报警规则失败')),
-    update: (id: number, payload: { name: string; description?: string; logicOperator: string; conditions: AlertCondition[] }) =>
+    update: (id: number, payload: AlertRulePayload) =>
       http.put<AlertRule>(`/alerts/rules/${id}`, payload).then(r => ensureSuccess<AlertRule>(r.data, '更新报警规则失败')),
     delete: (id: number) => http.delete(`/alerts/rules/${id}`).then(() => void 0)
   },
