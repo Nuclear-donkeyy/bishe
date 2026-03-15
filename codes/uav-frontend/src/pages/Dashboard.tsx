@@ -17,7 +17,14 @@ function Dashboard() {
     [missions]
   );
   const queuedMissions = useMemo(
-    () => missions.filter(mission => mission.status?.includes('队') || mission.status === 'PENDING'),
+    () =>
+      missions.filter(
+        mission =>
+          mission.status?.includes('队') ||
+          mission.status === 'PENDING' ||
+          mission.status === 'QUEUE' ||
+          mission.status === 'PREEMPTED'
+      ),
     [missions]
   );
   const nextMilestone = useMemo(

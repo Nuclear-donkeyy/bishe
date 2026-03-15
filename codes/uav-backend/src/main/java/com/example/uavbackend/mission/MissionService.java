@@ -79,9 +79,7 @@ public class MissionService {
     missionMapper.insert(mission);
     saveRoutePoints(mission.getId(), request.route());
     saveAssignments(mission.getId(), assignedDevices);
-    if (!assignedDevices.isEmpty()) {
-      missionQueueService.enqueue(mission, request.route(), assignedDevices, request.priority());
-    }
+    missionQueueService.enqueue(mission, request.route(), assignedDevices, request.priority());
     pushStatusUpdate(mission);
     return toDtoWithRoute(mission);
   }
@@ -105,11 +103,12 @@ public class MissionService {
         missionMapper.selectOne(
             new LambdaQueryWrapper<Mission>().eq(Mission::getMissionCode, missionCode));
     if (mission != null) {
+      List<String> uavCodes = findAssignedUavCodes(mission.getId());
       mission.setStatus(MissionStatus.INTERRUPTED.name());
       missionMapper.updateById(mission);
       missionQueueService.removeFromQueue(mission.getMissionCode());
+      releaseAssignments(mission.getId());
       // push interrupt command to assigned UAVs
-      List<String> uavCodes = findAssignedUavCodes(mission.getId());
       for (String code : uavCodes) {
         try {
           mqttCommandPublisher.publish(
@@ -188,6 +187,7 @@ public class MissionService {
       assignment.setMissionId(missionId);
       assignment.setUavId(device.getId());
       assignment.setAssignedAt(Instant.now());
+      assignment.setReleasedAt(null);
       assignmentMapper.insert(assignment);
     }
   }
@@ -195,7 +195,9 @@ public class MissionService {
   private List<String> findAssignedUavCodes(Long missionId) {
     List<MissionUavAssignment> assignments =
         assignmentMapper.selectList(
-            new LambdaQueryWrapper<MissionUavAssignment>().eq(MissionUavAssignment::getMissionId, missionId));
+            new LambdaQueryWrapper<MissionUavAssignment>()
+                .eq(MissionUavAssignment::getMissionId, missionId)
+                .isNull(MissionUavAssignment::getReleasedAt));
     if (assignments.isEmpty()) {
       return List.of();
     }
@@ -205,6 +207,18 @@ public class MissionService {
       return List.of();
     }
     return devices.stream().map(UavDevice::getUavCode).toList();
+  }
+
+  private void releaseAssignments(Long missionId) {
+    List<MissionUavAssignment> assignments =
+        assignmentMapper.selectList(
+            new LambdaQueryWrapper<MissionUavAssignment>()
+                .eq(MissionUavAssignment::getMissionId, missionId)
+                .isNull(MissionUavAssignment::getReleasedAt));
+    for (MissionUavAssignment assignment : assignments) {
+      assignment.setReleasedAt(Instant.now());
+      assignmentMapper.updateById(assignment);
+    }
   }
 
   private User findPilot(String pilotUsername) {

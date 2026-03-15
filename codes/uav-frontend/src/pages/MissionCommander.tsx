@@ -51,7 +51,7 @@ function RouteClickHandler({ onAddPoint }: { onAddPoint: (point: LatLngTuple) =>
 function MissionCommander() {
   const [missions, setMissions] = useState<MissionDto[]>([]);
   const [selectedMissionIds, setSelectedMissionIds] = useState<number[]>([]);
-  const [monitoringMission, setMonitoringMission] = useState<MissionDto | null>(null);
+  const [monitoringMissionCode, setMonitoringMissionCode] = useState<string | null>(null);
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [routeModalOpen, setRouteModalOpen] = useState(false);
   const [form] = Form.useForm<{
@@ -75,7 +75,6 @@ function MissionCommander() {
   const [alertRules, setAlertRules] = useState<AlertRule[]>([]);
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [nameFilter, setNameFilter] = useState<string>('');
-  const missionWsRef = useRef<WebSocket | null>(null);
   const [uavTelemetry, setUavTelemetry] = useState<
     Record<string, { missionId?: string; lat?: number; lng?: number }>
   >({});
@@ -107,14 +106,25 @@ function MissionCommander() {
       onMessage: payload => {
         if (!payload || !payload.uavCode) return;
         const key = payload.uavCode as string;
-        setUavTelemetry(prev => ({
-          ...prev,
-          [key]: {
+        setUavTelemetry(prev => {
+          const nextEntry = {
             missionId: payload.missionId || payload.missionCode,
             lat: payload.lat,
             lng: payload.lng
+          };
+          const current = prev[key];
+          if (
+            current?.missionId === nextEntry.missionId &&
+            current?.lat === nextEntry.lat &&
+            current?.lng === nextEntry.lng
+          ) {
+            return prev;
           }
-        }));
+          return {
+            ...prev,
+            [key]: nextEntry
+          };
+        });
       }
     });
     // 获取浏览器当前位置作为默认中心
@@ -139,7 +149,6 @@ function MissionCommander() {
 
   useEffect(() => {
     const socket = new WebSocket(getTelemetryWebSocketUrl());
-    missionWsRef.current = socket;
 
     const sendFrame = (command: string, headers: Record<string, string>) => {
       const lines = [command];
@@ -253,6 +262,21 @@ function MissionCommander() {
     () => missions.filter(mission => selectedMissionIds.includes(mission.id)),
     [missions, selectedMissionIds]
   );
+  const monitoringMission = useMemo(
+    () =>
+      monitoringMissionCode
+        ? missions.find(mission => mission.missionCode === monitoringMissionCode) ?? null
+        : null,
+    [missions, monitoringMissionCode]
+  );
+  const missionSelectOptions = useMemo(
+    () =>
+      filteredMissions.map(mission => ({
+        label: `${mission.name}（${mission.status ?? '未知'}）`,
+        value: mission.id
+      })),
+    [filteredMissions]
+  );
 
   useEffect(() => {
     if (selectedMissions.length && selectedMissions[0].route?.length) {
@@ -270,7 +294,7 @@ function MissionCommander() {
   
 
   const handleLineClick = (mission: MissionDto) => () => {
-    setMonitoringMission(mission);
+    setMonitoringMissionCode(mission.missionCode);
   };
 
   const renderStatusTag = (status: MissionDto['status']) => {
@@ -279,6 +303,8 @@ function MissionCommander() {
         return <Tag color="blue">排队</Tag>;
       case 'RUNNING':
         return <Tag color="green">运行中</Tag>;
+      case 'PREEMPTED':
+        return <Tag color="orange">已抢占</Tag>;
       case 'COMPLETED':
         return <Tag color="default">已完成</Tag>;
       case 'INTERRUPTED':
@@ -382,6 +408,7 @@ function MissionCommander() {
                   { label: '全部', value: 'ALL' },
                   { label: '排队', value: 'QUEUE' },
                   { label: '进行中', value: 'RUNNING' },
+                  { label: '已抢占', value: 'PREEMPTED' },
                   { label: '已结束', value: 'COMPLETED' },
                   { label: '已中断', value: 'INTERRUPTED' }
                 ]}
@@ -403,7 +430,7 @@ function MissionCommander() {
                   key={mission.id}
                   style={{ cursor: 'pointer', alignItems: 'flex-start' }}
                   onClick={() => {
-                    setMonitoringMission(mission);
+                    setMonitoringMissionCode(mission.missionCode);
                     setSelectedMissionIds([mission.id]);
                   }}
                   actions={[renderStatusTag(mission.status)]}
@@ -446,11 +473,8 @@ function MissionCommander() {
                       setMainMapCenter([lat, lng]);
                     }
                   }}
-                  options={filteredMissions.map(m => ({
-                    label: `${m.name}（${m.status ?? '未知'}）`,
-                    value: m.id
-                  }))}
-                  maxTagCount="responsive"
+                  options={missionSelectOptions}
+                  maxTagCount={2}
                 />
               </Space>
             </Space>
@@ -506,7 +530,7 @@ function MissionCommander() {
       <Drawer
         title={monitoringMission ? `${monitoringMission.name} - Details` : ''}
         open={!!monitoringMission}
-        onClose={() => setMonitoringMission(null)}
+        onClose={() => setMonitoringMissionCode(null)}
         width={420}
       >
         {monitoringMission ? (

@@ -73,15 +73,32 @@ class StompWebSocketClient {
   deactivate() {
     this.shouldReconnect = false;
     clearTimeout(this.reconnectTimer);
-    this.socket?.close();
+    if (this.socket) {
+      this.socket.onopen = null;
+      this.socket.onmessage = null;
+      this.socket.onerror = null;
+      this.socket.onclose = null;
+      this.socket.close();
+      this.socket = undefined;
+    }
   }
 
   private startConnection() {
     const wsUrl = getTelemetryWebSocketUrl();
     console.info('[WS] connecting to', wsUrl);
-    this.socket = new WebSocket(wsUrl);
+    const socket = new WebSocket(wsUrl);
+    let disconnectHandled = false;
+    this.socket = socket;
 
-    this.socket.onopen = () => {
+    const handleSocketDisconnect = () => {
+      if (disconnectHandled || this.socket !== socket) {
+        return;
+      }
+      disconnectHandled = true;
+      this.handleDisconnect();
+    };
+
+    socket.onopen = () => {
       console.info('[WS] socket opened, sending CONNECT frame');
       this.sendStompFrame('CONNECT', {
         'accept-version': '1.2',
@@ -89,22 +106,23 @@ class StompWebSocketClient {
       });
     };
 
-    this.socket.onmessage = event => {
+    socket.onmessage = event => {
       const data = event.data as string;
       this.handleStompFrame(data);
     };
 
-    this.socket.onerror = ev => {
+    socket.onerror = ev => {
       console.error('[WS] socket error', ev);
-      this.handleDisconnect();
+      handleSocketDisconnect();
     };
-    this.socket.onclose = ev => {
+    socket.onclose = ev => {
       console.warn('[WS] socket closed', ev.code, ev.reason);
-      this.handleDisconnect();
+      handleSocketDisconnect();
     };
   }
 
   private handleDisconnect() {
+    this.socket = undefined;
     if (this.connected) {
       this.connected = false;
       this.options.onDisconnect?.();
