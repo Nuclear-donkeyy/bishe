@@ -20,6 +20,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { fleetApi, configApi, userApi, type FleetSummary, type UavDevice } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { connectTelemetrySocket } from '../services/ws';
+import { getUavStatusMeta } from '../utils/uavStatus';
 
 type RegisterForm = {
   uavCode: string;
@@ -42,14 +43,8 @@ type TelemetryMap = Record<
 >;
 
 const statusTag = (status?: string) => {
-  if (!status) return <Tag color="default">--</Tag>;
-  const upper = status.toUpperCase();
-  if (upper === 'OFFLINE') return <Tag color="default">离线</Tag>;
-  if (upper === 'CRITICAL') return <Tag color="red">异常</Tag>;
-  if (upper === 'WARNING') return <Tag color="orange">链路预警</Tag>;
-  if (upper === 'PENDING_CONNECT') return <Tag color="default">待接入</Tag>;
-  if (upper === 'ONLINE') return <Tag color="green">在线</Tag>;
-  return <Tag color="default">{status}</Tag>;
+  const meta = getUavStatusMeta(status);
+  return <Tag color={meta.color}>{meta.label}</Tag>;
 };
 
 function FleetCenter() {

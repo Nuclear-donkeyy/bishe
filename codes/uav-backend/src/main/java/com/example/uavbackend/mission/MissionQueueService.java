@@ -56,6 +56,39 @@ public class MissionQueueService {
   private final com.example.uavbackend.analytics.MissionDataAggregator dataAggregator;
   private final ObjectMapper objectMapper = new ObjectMapper();
 
+  public Optional<String> validateAssignedDispatchReadiness(
+      List<List<Double>> route, List<UavDevice> devices, String priority) {
+    if (devices == null || devices.isEmpty()) {
+      return Optional.empty();
+    }
+    MissionQueueItem preview =
+        buildQueueItem(
+            "preview",
+            route == null ? List.of() : route,
+            devices.stream().map(UavDevice::getUavCode).toList(),
+            priority,
+            Instant.now().toEpochMilli(),
+            0,
+            null,
+            "preflight_validation");
+    List<String> blockedReasons = new ArrayList<>();
+    for (UavDevice device : devices) {
+      DispatchCandidate candidate = buildCandidate(preview, device.getUavCode(), Set.of());
+      if (candidate == null) {
+        blockedReasons.add(device.getUavCode() + " 当前离线或未上报遥测");
+        continue;
+      }
+      if (candidate.isEligible() && !candidate.isOccupied()) {
+        return Optional.empty();
+      }
+      blockedReasons.add(formatBlockedReason(candidate, preview));
+    }
+    if (blockedReasons.isEmpty()) {
+      return Optional.of("指定无人机当前无法执行任务");
+    }
+    return Optional.of(String.join("；", blockedReasons));
+  }
+
   public void enqueue(
       Mission mission, List<List<Double>> route, List<UavDevice> devices, String priority) {
     MissionQueueItem item =
@@ -228,9 +261,11 @@ public class MissionQueueService {
     if (snapshot.batteryPercent() == null) {
       return false;
     }
-    return snapshot.batteryPercent()
-            < Math.min(
-                missionProfile.getRequiredBatteryPercent() + DYNAMIC_BATTERY_BUFFER, 95.0)
+    double rebalanceBatteryThreshold =
+        Math.max(
+            MIN_REQUIRED_BATTERY,
+            missionProfile.getRequiredBatteryPercent() - DYNAMIC_BATTERY_BUFFER);
+    return snapshot.batteryPercent() < rebalanceBatteryThreshold
         || snapshot.healthScore() < DYNAMIC_HEALTH_FLOOR;
   }
 
@@ -950,6 +985,48 @@ public class MissionQueueService {
 
   private double clamp(double value, double min, double max) {
     return Math.max(min, Math.min(max, value));
+  }
+
+  private String formatBlockedReason(DispatchCandidate candidate, MissionQueueItem item) {
+    String reason = candidate.getReason();
+    return switch (reason) {
+      case "status_not_dispatchable" ->
+          candidate.getUavCode() + " 当前状态为 " + readableStatus(candidate.getSnapshot().status());
+      case "occupied_by_higher_or_equal_priority" ->
+          candidate.getUavCode() + " 已被同级或更高优先级任务占用";
+      default -> {
+        if (reason != null && reason.startsWith("battery_insufficient")) {
+          double current = candidate.getSnapshot().batteryPercent() == null ? 0.0 : candidate.getSnapshot().batteryPercent();
+          yield candidate.getUavCode()
+              + " 电量不足（"
+              + Math.round(current * 10.0) / 10.0
+              + "% < "
+              + Math.round(item.getRequiredBatteryPercent() * 10.0) / 10.0
+              + "%）";
+        }
+        if (reason != null && reason.startsWith("health_low")) {
+          yield candidate.getUavCode() + " 健康度过低（" + candidate.getSnapshot().healthScore() + "）";
+        }
+        yield candidate.getUavCode() + " 当前不可调度";
+      }
+    };
+  }
+
+  private String readableStatus(String status) {
+    if (!StringUtils.hasText(status)) {
+      return "未知";
+    }
+    return switch (status.trim().toUpperCase()) {
+      case "IDLE" -> "空闲待命";
+      case "ONLINE" -> "在线";
+      case "OFFLINE" -> "离线";
+      case "WARNING" -> "链路预警";
+      case "CRITICAL" -> "严重异常";
+      case "RUNNING", "EXECUTING" -> "任务执行中";
+      case "RETURNING" -> "返航中";
+      case "PENDING_CONNECT" -> "待接入";
+      default -> status;
+    };
   }
 
   private Map<String, Object> payloadOf(Object... keyValues) {

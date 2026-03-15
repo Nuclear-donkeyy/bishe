@@ -261,9 +261,6 @@ function Dashboard() {
           <Typography.Title level={3} style={{ color: '#f8fafc', margin: 0 }}>
             运行总览
           </Typography.Title>
-          <Typography.Paragraph style={{ color: 'rgba(240,247,255,0.82)', marginBottom: 0, maxWidth: 920 }}>
-            面向全系统的统一运行视图，集中呈现机队在线态势、任务执行结构、告警联动情况与配置覆盖水平，帮助快速判断平台当前的运行负载与风险位置。
-          </Typography.Paragraph>
           <Space wrap size={[8, 8]}>
             <Tag color="blue">运行中任务 {runningMissions.length}</Tag>
             <Tag color="cyan">排队任务 {queuedMissions.length}</Tag>
@@ -271,14 +268,6 @@ function Dashboard() {
             <Tag color="gold">活跃监控任务 {activeMonitoringTasks}</Tag>
             <Tag color="red">未处理告警 {ruleStats.unread}</Tag>
           </Space>
-          <Alert
-            type="info"
-            showIcon
-            message="系统运行简报"
-            description={`当前在线无人机 ${summary?.online ?? 0} 架，任务成功率 ${missionSuccessRate.toFixed(
-              1
-            )}% ，规则覆盖率 ${ruleCoverage.toFixed(1)}% ，最近更新时间 ${dayjs().format('YYYY-MM-DD HH:mm:ss')}`}
-          />
         </Space>
       </Card>
 

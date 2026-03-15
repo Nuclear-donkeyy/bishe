@@ -90,6 +90,11 @@ public class MissionService {
     }
     mission.setProgress(0);
     List<UavDevice> assignedDevices = findAssignedDevices(request.assignedUavs(), scope);
+    missionQueueService
+        .validateAssignedDispatchReadiness(request.route(), assignedDevices, request.priority())
+        .ifPresent(reason -> {
+          throw new IllegalArgumentException("指定无人机当前无法执行任务：" + reason);
+        });
     mission.setStatus(MissionStatus.QUEUE.name());
     mission.setColorHex("#22c55e");
     mission.setMetrics(null);
@@ -120,28 +125,12 @@ public class MissionService {
   @Transactional
   public void interrupt(String missionCode) {
     AccessScope scope = accessScopeService.currentScope();
-    Mission mission =
-        missionMapper.selectOne(
-            new LambdaQueryWrapper<Mission>().eq(Mission::getMissionCode, missionCode));
-    if (mission != null) {
-      ensureMissionAccess(scope, mission);
-      List<String> uavCodes = findAssignedUavCodes(mission.getId());
-      mission.setStatus(MissionStatus.INTERRUPTED.name());
-      missionMapper.updateById(mission);
-      missionQueueService.removeFromQueue(mission.getMissionCode());
-      releaseAssignments(mission.getId());
-      // push interrupt command to assigned UAVs
-      for (String code : uavCodes) {
-        try {
-          mqttCommandPublisher.publish(
-              code, java.util.Map.of("type", "interrupt", "missionCode", missionCode));
-          log.info("Sent interrupt to UAV {} for mission {}", code, missionCode);
-        } catch (Exception e) {
-          log.warn("Failed to send interrupt to UAV {} for mission {}", code, missionCode, e);
-        }
-      }
-      pushStatusUpdate(mission);
-    }
+    interruptInternal(missionCode, scope, true);
+  }
+
+  @Transactional
+  public void interruptBySystem(String missionCode) {
+    interruptInternal(missionCode, null, false);
   }
 
   private void saveRoutePoints(Long missionId, List<List<Double>> points) {
@@ -270,6 +259,37 @@ public class MissionService {
     messagingTemplate.convertAndSend(
         "/topic/mission-updates",
         new MissionStatusPayload(mission.getMissionCode(), mission.getStatus()));
+  }
+
+  private void interruptInternal(String missionCode, AccessScope scope, boolean enforceAccess) {
+    Mission mission =
+        missionMapper.selectOne(
+            new LambdaQueryWrapper<Mission>().eq(Mission::getMissionCode, missionCode));
+    if (mission == null) {
+      return;
+    }
+    if (enforceAccess) {
+      ensureMissionAccess(scope, mission);
+    }
+    if (MissionStatus.INTERRUPTED.name().equalsIgnoreCase(mission.getStatus())
+        || MissionStatus.COMPLETED.name().equalsIgnoreCase(mission.getStatus())) {
+      return;
+    }
+    List<String> uavCodes = findAssignedUavCodes(mission.getId());
+    mission.setStatus(MissionStatus.INTERRUPTED.name());
+    missionMapper.updateById(mission);
+    missionQueueService.removeFromQueue(mission.getMissionCode());
+    releaseAssignments(mission.getId());
+    for (String code : uavCodes) {
+      try {
+        mqttCommandPublisher.publish(
+            code, java.util.Map.of("type", "interrupt", "missionCode", missionCode));
+        log.info("Sent interrupt to UAV {} for mission {}", code, missionCode);
+      } catch (Exception e) {
+        log.warn("Failed to send interrupt to UAV {} for mission {}", code, missionCode, e);
+      }
+    }
+    pushStatusUpdate(mission);
   }
 
   private void applyPilotScope(LambdaQueryWrapper<Mission> wrapper, AccessScope scope) {

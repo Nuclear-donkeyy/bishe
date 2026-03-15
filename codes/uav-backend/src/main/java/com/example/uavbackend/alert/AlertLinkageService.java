@@ -33,7 +33,7 @@ public class AlertLinkageService {
         summaries.add("自动中断跳过：任务状态为 " + mission.getStatus());
       } else {
         try {
-          missionService.interrupt(mission.getMissionCode());
+          missionService.interruptBySystem(mission.getMissionCode());
           interruptSuccess = true;
           summaries.add("任务已自动中断");
         } catch (Exception ex) {
