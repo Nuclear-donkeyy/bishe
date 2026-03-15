@@ -45,6 +45,7 @@ import {
   type MissionTypeItem,
   type TaskExecutionDto
 } from '../services/api';
+import { useAuth } from '../context/AuthContext';
 
 const { RangePicker } = DatePicker;
 
@@ -201,6 +202,7 @@ function AnalyticsChart({
 }
 
 function DataAnalytics() {
+  const { currentUser } = useAuth();
   const [missionTypes, setMissionTypes] = useState<MissionTypeItem[]>([]);
   const [metrics, setMetrics] = useState<MetricItem[]>([]);
   const [definitions, setDefinitions] = useState<AnalyticsDefinitionDto[]>([]);
@@ -245,6 +247,13 @@ function DataAnalytics() {
       .then(res => setMetrics((res as MetricItem[]) || []))
       .catch(() => setMetrics([]));
   }, []);
+
+  useEffect(() => {
+    if (currentUser?.role === 'superadmin') {
+      return;
+    }
+    form.setFieldsValue({ operatorName: currentUser?.name });
+  }, [currentUser, form]);
 
   const selectedMissionType = Form.useWatch('missionType', form);
 
@@ -1198,11 +1207,13 @@ function DataAnalytics() {
                 <Input placeholder="按无人机编码筛选" />
               </Form.Item>
             </Col>
-            <Col xs={24} md={4}>
-              <Form.Item name="operatorName" label="操作人">
-                <Input placeholder="按操作人筛选" />
-              </Form.Item>
-            </Col>
+            {currentUser?.role === 'superadmin' ? (
+              <Col xs={24} md={4}>
+                <Form.Item name="operatorName" label="操作人">
+                  <Input placeholder="按操作人筛选" />
+                </Form.Item>
+              </Col>
+            ) : null}
             <Col xs={24} md={4}>
               <Form.Item name="missionCode" label="任务编码">
                 <Input placeholder="按任务编码筛选" />

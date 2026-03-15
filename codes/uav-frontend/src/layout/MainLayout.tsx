@@ -26,12 +26,12 @@ function MainLayout() {
       { key: '/fleet', icon: <LaptopOutlined />, label: '无人机管理' },
       { key: '/missions', icon: <RocketOutlined />, label: '任务指挥' },
       { key: '/monitoring', icon: <RadarChartOutlined />, label: '实时监控' },
-      { key: '/analytics', icon: <BarChartOutlined />, label: '数据分析' }
+      { key: '/analytics', icon: <BarChartOutlined />, label: '数据分析' },
+      { key: '/alerts', icon: <AlertOutlined />, label: currentUser?.role === 'superadmin' ? '报警规则管理' : '报警记录' }
     ];
     if (currentUser?.role === 'superadmin') {
       base.push({ key: '/personnel', icon: <TeamOutlined />, label: '人员管理' });
       base.push({ key: '/config-center', icon: <ProfileOutlined />, label: '任务与指标配置' });
-      base.push({ key: '/alerts', icon: <AlertOutlined />, label: '报警规则管理' });
     }
     return base;
   }, [currentUser?.role]);

@@ -1,6 +1,8 @@
 package com.example.uavbackend.monitoring;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.example.uavbackend.auth.AccessScope;
+import com.example.uavbackend.auth.AccessScopeService;
 import com.example.uavbackend.monitoring.dto.MonitoringTaskDto;
 import com.example.uavbackend.monitoring.dto.MonitoringTaskDto.RuleDto;
 import java.util.List;
@@ -15,30 +17,43 @@ import org.springframework.transaction.annotation.Transactional;
 public class MonitoringService {
   private final MonitoringTaskMapper taskMapper;
   private final MonitoringRuleMapper ruleMapper;
+  private final AccessScopeService accessScopeService;
 
   public List<MonitoringTaskDto> list(String status) {
+    AccessScope scope = accessScopeService.currentScope();
     LambdaQueryWrapper<MonitoringTask> wrapper = new LambdaQueryWrapper<>();
     if (status != null) {
       wrapper.eq(MonitoringTask::getStatus, status);
+    }
+    if (!scope.superAdmin()) {
+      wrapper.eq(MonitoringTask::getOwnerName, scope.displayName());
     }
     List<MonitoringTask> tasks = taskMapper.selectList(wrapper);
     return tasks.stream().map(this::toDto).collect(Collectors.toList());
   }
 
   public Optional<MonitoringTaskDto> detail(String taskCode) {
+    AccessScope scope = accessScopeService.currentScope();
     MonitoringTask task =
         taskMapper.selectOne(
             new LambdaQueryWrapper<MonitoringTask>().eq(MonitoringTask::getTaskCode, taskCode));
-    return Optional.ofNullable(task).map(this::toDto);
+    if (task == null || (!scope.superAdmin() && !scope.displayName().equals(task.getOwnerName()))) {
+      return Optional.empty();
+    }
+    return Optional.of(toDto(task));
   }
 
   @Transactional
   public RuleDto addRule(String taskCode, RuleDto ruleDto) {
+    AccessScope scope = accessScopeService.currentScope();
     MonitoringTask task =
         taskMapper.selectOne(
             new LambdaQueryWrapper<MonitoringTask>().eq(MonitoringTask::getTaskCode, taskCode));
     if (task == null) {
       throw new IllegalArgumentException("任务不存在");
+    }
+    if (!scope.superAdmin() && !scope.displayName().equals(task.getOwnerName())) {
+      throw new IllegalArgumentException("无权操作该监控任务");
     }
     MonitoringRule rule = new MonitoringRule();
     rule.setTaskId(task.getId());
@@ -52,6 +67,17 @@ public class MonitoringService {
 
   @Transactional
   public void deleteRule(Long ruleId) {
+    AccessScope scope = accessScopeService.currentScope();
+    MonitoringRule rule = ruleMapper.selectById(ruleId);
+    if (rule == null) {
+      return;
+    }
+    if (!scope.superAdmin()) {
+      MonitoringTask task = taskMapper.selectById(rule.getTaskId());
+      if (task == null || !scope.displayName().equals(task.getOwnerName())) {
+        throw new IllegalArgumentException("无权删除该规则");
+      }
+    }
     ruleMapper.deleteById(ruleId);
   }
 

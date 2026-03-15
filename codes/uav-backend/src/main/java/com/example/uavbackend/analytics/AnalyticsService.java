@@ -3,6 +3,8 @@ package com.example.uavbackend.analytics;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.example.uavbackend.alert.AlertRecord;
 import com.example.uavbackend.alert.AlertRecordMapper;
+import com.example.uavbackend.auth.AccessScope;
+import com.example.uavbackend.auth.AccessScopeService;
 import com.example.uavbackend.analytics.dto.AnalyticsDefinitionDto;
 import com.example.uavbackend.analytics.dto.AnalyticsMetricOptionDto;
 import com.example.uavbackend.analytics.dto.AnalyticsReplayDto;
@@ -13,6 +15,7 @@ import com.example.uavbackend.analytics.dto.AnalyticsSeriesDto;
 import com.example.uavbackend.analytics.dto.AnalyticsSeriesPointDto;
 import com.example.uavbackend.analytics.dto.AnalyticsTimeSeriesDto;
 import com.example.uavbackend.analytics.dto.MissionComparisonDto;
+import com.example.uavbackend.analytics.dto.MissionDataRecordDto;
 import com.example.uavbackend.analytics.dto.TaskExecutionDto;
 import com.example.uavbackend.configcenter.MetricDefinition;
 import com.example.uavbackend.configcenter.MetricDefinitionMapper;
@@ -79,6 +82,7 @@ public class AnalyticsService {
   private final UavTelemetryMapper uavTelemetryMapper;
   private final UavDeviceMapper uavDeviceMapper;
   private final ObjectMapper objectMapper;
+  private final AccessScopeService accessScopeService;
 
   public List<AnalyticsDefinitionDto> definitions(String missionType) {
     LambdaQueryWrapper<AnalyticsDefinition> wrapper = new LambdaQueryWrapper<>();
@@ -107,19 +111,24 @@ public class AnalyticsService {
   }
 
   public List<TaskExecutionDto> taskExecutions(String missionType, Instant from, Instant to) {
+    AccessScope scope = accessScopeService.currentScope();
     List<TaskExecutionDto> persisted = loadPersistedTaskExecutions(missionType, from, to);
-    if (!persisted.isEmpty()) {
-      return persisted;
+    List<TaskExecutionDto> scopedPersisted =
+        persisted.stream().filter(item -> canAccessOwner(scope, item.ownerName())).toList();
+    if (!scopedPersisted.isEmpty()) {
+      return scopedPersisted;
     }
-    return deriveTaskExecutions(missionType, from, to);
+    return deriveTaskExecutions(missionType, from, to, scope);
   }
 
   public List<MissionComparisonDto> compare(List<String> missionCodes) {
+    AccessScope scope = accessScopeService.currentScope();
     if (missionCodes == null || missionCodes.size() < 2 || missionCodes.size() > 5) {
       throw new IllegalArgumentException("请选择 2 到 5 个任务进行对比");
     }
     List<String> normalizedMissionCodes =
         missionCodes.stream().filter(StringUtils::hasText).distinct().toList();
+    normalizedMissionCodes = filterAccessibleMissionCodes(normalizedMissionCodes, scope);
     if (normalizedMissionCodes.size() < 2 || normalizedMissionCodes.size() > 5) {
       throw new IllegalArgumentException("请选择 2 到 5 个任务进行对比");
     }
@@ -246,7 +255,7 @@ public class AnalyticsService {
     return taskExecutionMapper.selectList(wrapper).stream().map(this::toDto).toList();
   }
 
-  private List<TaskExecutionDto> deriveTaskExecutions(String missionType, Instant from, Instant to) {
+  private List<TaskExecutionDto> deriveTaskExecutions(String missionType, Instant from, Instant to, AccessScope scope) {
     if (!StringUtils.hasText(missionType)) {
       return List.of();
     }
@@ -265,8 +274,14 @@ public class AnalyticsService {
     }
     wrapper.orderByAsc(MissionDataRecord::getEndTime);
     List<MissionDataRecord> records = recordMapper.selectList(wrapper);
+    if (!scope.superAdmin()) {
+      records =
+          records.stream()
+              .filter(record -> canAccessOwner(scope, record.getOperatorName(), record.getPilotName()))
+              .toList();
+    }
     if (records.isEmpty()) {
-      return deriveTaskExecutionsFromMissions(missionType);
+      return deriveTaskExecutionsFromMissions(missionType, scope);
     }
     Map<String, MissionDataRecord> latestRecordByMissionCode = latestRecordByMissionCode(records);
     Map<String, Mission> missionByCode = loadMissionsByCodes(latestRecordByMissionCode.keySet());
@@ -441,7 +456,7 @@ public class AnalyticsService {
         .toList();
   }
 
-  private List<TaskExecutionDto> deriveTaskExecutionsFromMissions(String missionType) {
+  private List<TaskExecutionDto> deriveTaskExecutionsFromMissions(String missionType, AccessScope scope) {
     String missionTypeCode = resolveMissionTypeCode(missionType);
     List<Mission> missions =
         missionMapper.selectList(
@@ -452,6 +467,9 @@ public class AnalyticsService {
                             .or()
                             .eq(Mission::getMissionType, missionTypeCode))
                 .orderByAsc(Mission::getId));
+    if (!scope.superAdmin()) {
+      missions = missions.stream().filter(mission -> canAccessMission(scope, mission)).toList();
+    }
     if (missions.isEmpty()) {
       return List.of();
     }
@@ -577,9 +595,11 @@ public class AnalyticsService {
     if (missionCodes.isEmpty()) {
       return Map.of();
     }
+    AccessScope scope = accessScopeService.currentScope();
     return missionMapper
         .selectList(new LambdaQueryWrapper<Mission>().in(Mission::getMissionCode, missionCodes))
         .stream()
+        .filter(mission -> canAccessMission(scope, mission))
         .collect(Collectors.toMap(Mission::getMissionCode, mission -> mission, (left, right) -> left));
   }
 
@@ -769,6 +789,7 @@ public class AnalyticsService {
   }
 
   private ReplayContext loadReplayContext(String missionCode) {
+    AccessScope scope = accessScopeService.currentScope();
     if (!StringUtils.hasText(missionCode)) {
       throw new IllegalArgumentException("任务编码不能为空");
     }
@@ -777,6 +798,9 @@ public class AnalyticsService {
             new LambdaQueryWrapper<Mission>().eq(Mission::getMissionCode, missionCode).last("limit 1"));
     if (mission == null) {
       throw new IllegalArgumentException("任务不存在");
+    }
+    if (!canAccessMission(scope, mission)) {
+      throw new IllegalArgumentException("无权访问该任务");
     }
 
     MissionDataRecord record =
@@ -858,6 +882,93 @@ public class AnalyticsService {
       wrapper.le(UavTelemetry::getReportedAt, endTime.plusSeconds(60));
     }
     return uavTelemetryMapper.selectList(wrapper);
+  }
+
+  public List<MissionDataRecordDto> listMissionData(
+      String missionType,
+      String uavCode,
+      String operatorName,
+      String missionCode,
+      LocalDateTime from,
+      LocalDateTime to) {
+    AccessScope scope = accessScopeService.currentScope();
+    LambdaQueryWrapper<MissionDataRecord> wrapper =
+        new LambdaQueryWrapper<MissionDataRecord>().eq(MissionDataRecord::getMissionType, missionType);
+    if (uavCode != null) {
+      wrapper.eq(MissionDataRecord::getUavCode, uavCode);
+    }
+    if (scope.superAdmin()) {
+      if (operatorName != null) {
+        wrapper.eq(MissionDataRecord::getOperatorName, operatorName);
+      }
+    } else {
+      wrapper.and(
+          w ->
+              w.eq(MissionDataRecord::getOperatorName, scope.displayName())
+                  .or()
+                  .eq(MissionDataRecord::getPilotName, scope.displayName()));
+    }
+    if (missionCode != null) {
+      wrapper.eq(MissionDataRecord::getMissionCode, missionCode);
+    }
+    if (from != null) {
+      wrapper.ge(MissionDataRecord::getEndTime, from);
+    }
+    if (to != null) {
+      wrapper.le(MissionDataRecord::getEndTime, to);
+    }
+    wrapper.orderByDesc(MissionDataRecord::getEndTime);
+    return recordMapper.selectList(wrapper).stream().map(this::toMissionDataDto).toList();
+  }
+
+  private MissionDataRecordDto toMissionDataDto(MissionDataRecord r) {
+    Map<String, Object> maxMap = MissionDataAggregator.jsonToMap(objectMapper, r.getDataMax());
+    Map<String, Object> minMap = MissionDataAggregator.jsonToMap(objectMapper, r.getDataMin());
+    Map<String, Object> avgMap = MissionDataAggregator.jsonToMap(objectMapper, r.getDataAvg());
+    return new MissionDataRecordDto(
+        r.getId(),
+        r.getMissionId(),
+        r.getMissionCode(),
+        r.getMissionType(),
+        r.getPilotName(),
+        r.getUavCode(),
+        r.getOperatorName(),
+        r.getStartTime(),
+        r.getEndTime(),
+        maxMap,
+        minMap,
+        avgMap);
+  }
+
+  private boolean canAccessOwner(AccessScope scope, String... ownerNames) {
+    if (scope.superAdmin()) {
+      return true;
+    }
+    for (String ownerName : ownerNames) {
+      if (StringUtils.hasText(ownerName) && ownerName.equals(scope.displayName())) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private boolean canAccessMission(AccessScope scope, Mission mission) {
+    return scope.superAdmin() || (mission != null && StringUtils.hasText(mission.getPilotName()) && mission.getPilotName().equals(scope.displayName()));
+  }
+
+  private List<String> filterAccessibleMissionCodes(List<String> missionCodes, AccessScope scope) {
+    if (scope.superAdmin() || missionCodes.isEmpty()) {
+      return missionCodes;
+    }
+    return missionMapper
+        .selectList(
+            new LambdaQueryWrapper<Mission>()
+                .in(Mission::getMissionCode, missionCodes)
+                .eq(Mission::getPilotName, scope.displayName()))
+        .stream()
+        .map(Mission::getMissionCode)
+        .distinct()
+        .toList();
   }
 
   private String resolveUavCodeFromMissionEvents(List<MissionEvent> missionEvents) {

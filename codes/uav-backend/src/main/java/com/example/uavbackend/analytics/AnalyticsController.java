@@ -1,6 +1,5 @@
 package com.example.uavbackend.analytics;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.example.uavbackend.analytics.dto.AnalyticsCompareRequest;
 import com.example.uavbackend.analytics.dto.AnalyticsDefinitionDto;
 import com.example.uavbackend.analytics.dto.AnalyticsReplayDto;
@@ -8,11 +7,9 @@ import com.example.uavbackend.analytics.dto.AnalyticsTimeSeriesDto;
 import com.example.uavbackend.analytics.dto.MissionComparisonDto;
 import com.example.uavbackend.analytics.dto.MissionDataRecordDto;
 import com.example.uavbackend.analytics.dto.TaskExecutionDto;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -26,9 +23,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/analytics")
 @RequiredArgsConstructor
 public class AnalyticsController {
-  private final MissionDataRecordMapper recordMapper;
   private final AnalyticsService analyticsService;
-  private final ObjectMapper objectMapper;
 
   @GetMapping("/definitions")
   public List<AnalyticsDefinitionDto> definitions(
@@ -73,33 +68,6 @@ public class AnalyticsController {
           LocalDateTime from,
       @RequestParam(value = "to", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)
           LocalDateTime to) {
-    LambdaQueryWrapper<MissionDataRecord> wrapper =
-        new LambdaQueryWrapper<MissionDataRecord>().eq(MissionDataRecord::getMissionType, missionType);
-    if (uavCode != null) wrapper.eq(MissionDataRecord::getUavCode, uavCode);
-    if (operatorName != null) wrapper.eq(MissionDataRecord::getOperatorName, operatorName);
-    if (missionCode != null) wrapper.eq(MissionDataRecord::getMissionCode, missionCode);
-    if (from != null) wrapper.ge(MissionDataRecord::getEndTime, from);
-    if (to != null) wrapper.le(MissionDataRecord::getEndTime, to);
-    wrapper.orderByDesc(MissionDataRecord::getEndTime);
-    return recordMapper.selectList(wrapper).stream().map(this::toDto).toList();
-  }
-
-  private MissionDataRecordDto toDto(MissionDataRecord r) {
-    Map<String, Object> maxMap = MissionDataAggregator.jsonToMap(objectMapper, r.getDataMax());
-    Map<String, Object> minMap = MissionDataAggregator.jsonToMap(objectMapper, r.getDataMin());
-    Map<String, Object> avgMap = MissionDataAggregator.jsonToMap(objectMapper, r.getDataAvg());
-    return new MissionDataRecordDto(
-        r.getId(),
-        r.getMissionId(),
-        r.getMissionCode(),
-        r.getMissionType(),
-        r.getPilotName(),
-        r.getUavCode(),
-        r.getOperatorName(),
-        r.getStartTime(),
-        r.getEndTime(),
-        maxMap,
-        minMap,
-        avgMap);
+    return analyticsService.listMissionData(missionType, uavCode, operatorName, missionCode, from, to);
   }
 }

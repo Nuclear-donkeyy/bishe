@@ -2,6 +2,8 @@ package com.example.uavbackend.fleet;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.example.uavbackend.auth.AccessScope;
+import com.example.uavbackend.auth.AccessScopeService;
 import com.example.uavbackend.auth.User;
 import com.example.uavbackend.auth.UserMapper;
 import com.example.uavbackend.auth.UserStatus;
@@ -27,9 +29,11 @@ public class FleetService {
   private final UavSensorMapper uavSensorMapper;
   private final SensorTypeMapper sensorTypeMapper;
   private final TelemetryService telemetryService;
+  private final AccessScopeService accessScopeService;
 
   public FleetSummaryDto summary() {
-    List<UavDevice> all = deviceMapper.selectList(null);
+    AccessScope scope = accessScopeService.currentScope();
+    List<UavDevice> all = loadScopedDevices(scope);
     long online =
         all.stream()
             .map(d -> telemetryService.resolveStatus(d.getUavCode()))
@@ -44,7 +48,9 @@ public class FleetService {
   }
 
   public org.springframework.data.domain.Page<UavDeviceDto> list(List<UavStatus> statuses, int page, int size) {
+    AccessScope scope = accessScopeService.currentScope();
     LambdaQueryWrapper<UavDevice> wrapper = new LambdaQueryWrapper<>();
+    applyPilotScope(wrapper, scope);
     Page<UavDevice> mpPage = deviceMapper.selectPage(Page.of(Math.max(page, 1), size), wrapper);
     List<UavDevice> records = mpPage.getRecords();
     List<UavDevice> filtered =
@@ -58,8 +64,9 @@ public class FleetService {
   }
 
   public List<UavDeviceDto> available(List<String> excludeMissionIds) {
+    AccessScope scope = accessScopeService.currentScope();
     // excludeMissionIds currently unused
-    return deviceMapper.selectList(null).stream()
+    return loadScopedDevices(scope).stream()
         .filter(device -> telemetryService.resolveStatus(device.getUavCode()) == UavStatus.ONLINE)
         .map(this::toDto)
         .collect(Collectors.toList());
@@ -67,14 +74,16 @@ public class FleetService {
 
   @Transactional
   public UavDeviceDto register(UavRequest request) {
+    AccessScope scope = accessScopeService.currentScope();
     if (deviceMapper.exists(new LambdaQueryWrapper<UavDevice>().eq(UavDevice::getUavCode, request.uavCode()))) {
       throw new IllegalArgumentException("无人机编号已存在");
     }
+    String effectivePilotUsername = scope.superAdmin() ? request.pilotUsername() : scope.username();
     User pilot =
         Optional.ofNullable(
                 userMapper.selectOne(
                     new LambdaQueryWrapper<User>()
-                        .eq(User::getUsername, request.pilotUsername())
+                        .eq(User::getUsername, effectivePilotUsername)
                         .eq(User::getStatus, UserStatus.ACTIVE)))
             .orElseThrow(() -> new IllegalArgumentException("责任人不存在或已禁用"));
     UavDevice device = new UavDevice();
@@ -94,6 +103,18 @@ public class FleetService {
     List<String> sensors = loadSensorCodes(entity.getId());
     // 前端状态仅从 WebSocket 遥测推送得出，这里不返回 status
     return new UavDeviceDto(entity.getId(), entity.getUavCode(), entity.getModel(), entity.getPilotName(), sensors);
+  }
+
+  private List<UavDevice> loadScopedDevices(AccessScope scope) {
+    LambdaQueryWrapper<UavDevice> wrapper = new LambdaQueryWrapper<>();
+    applyPilotScope(wrapper, scope);
+    return deviceMapper.selectList(wrapper);
+  }
+
+  private void applyPilotScope(LambdaQueryWrapper<UavDevice> wrapper, AccessScope scope) {
+    if (!scope.superAdmin()) {
+      wrapper.eq(UavDevice::getPilotName, scope.displayName());
+    }
   }
 
   private void saveSensors(Long uavId, List<String> sensorCodes) {

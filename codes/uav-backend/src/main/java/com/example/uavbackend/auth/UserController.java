@@ -1,6 +1,7 @@
 package com.example.uavbackend.auth;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.example.uavbackend.auth.dto.UserDto;
 import java.util.List;
 import java.util.Objects;
 import org.springframework.security.core.Authentication;
@@ -19,19 +20,27 @@ import org.springframework.web.bind.annotation.RestController;
 public class UserController {
   private final UserMapper userMapper;
   private final PasswordEncoder passwordEncoder;
+  private final AccessScopeService accessScopeService;
 
-  public UserController(UserMapper userMapper, PasswordEncoder passwordEncoder) {
+  public UserController(
+      UserMapper userMapper, PasswordEncoder passwordEncoder, AccessScopeService accessScopeService) {
     this.userMapper = userMapper;
     this.passwordEncoder = passwordEncoder;
+    this.accessScopeService = accessScopeService;
   }
 
   @GetMapping
-  public List<User> list() {
-    return userMapper.selectList(new LambdaQueryWrapper<User>().eq(User::getStatus, UserStatus.ACTIVE));
+  public List<UserDto> list() {
+    AccessScope scope = accessScopeService.currentScope();
+    LambdaQueryWrapper<User> wrapper = new LambdaQueryWrapper<User>().eq(User::getStatus, UserStatus.ACTIVE);
+    if (!scope.superAdmin()) {
+      wrapper.eq(User::getUsername, scope.username());
+    }
+    return userMapper.selectList(wrapper).stream().map(this::toDto).toList();
   }
 
   @PostMapping
-  public User create(@RequestBody CreateUserRequest req) {
+  public UserDto create(@RequestBody CreateUserRequest req) {
     if (req.username() == null || req.username().isBlank()) {
       throw new IllegalArgumentException("用户名不能为空");
     }
@@ -54,7 +63,7 @@ public class UserController {
     user.setRole(role);
     user.setStatus(UserStatus.ACTIVE);
     userMapper.insert(user);
-    return user;
+    return toDto(user);
   }
 
   @DeleteMapping("/{id}")
@@ -100,6 +109,10 @@ public class UserController {
     }
     target.setPasswordHash(passwordEncoder.encode("123456"));
     userMapper.updateById(target);
+  }
+
+  private UserDto toDto(User user) {
+    return new UserDto(user.getId(), user.getUsername(), user.getName(), user.getRole());
   }
 
   public record CreateUserRequest(String username, String password, String name, String role) {}

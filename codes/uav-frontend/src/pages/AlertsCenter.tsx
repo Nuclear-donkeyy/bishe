@@ -31,6 +31,7 @@ import {
   type MetricItem,
   type MissionDto
 } from '../services/api';
+import { useAuth } from '../context/AuthContext';
 
 type ConfigMode = 'template' | 'rule';
 
@@ -51,6 +52,7 @@ type RuleForm = {
 };
 
 function AlertsCenter() {
+  const { currentUser } = useAuth();
   const [templates, setTemplates] = useState<AlertRule[]>([]);
   const [rules, setRules] = useState<AlertRule[]>([]);
   const [records, setRecords] = useState<AlertRecord[]>([]);
@@ -66,8 +68,15 @@ function AlertsCenter() {
   const [loadingRules, setLoadingRules] = useState(false);
   const [loadingRecords, setLoadingRecords] = useState(false);
   const notifyEnabled = Form.useWatch('notifyEnabled', ruleForm);
+  const isSuperAdmin = currentUser?.role === 'superadmin';
 
   const loadRules = async () => {
+    if (!isSuperAdmin) {
+      setTemplates([]);
+      setRules([]);
+      setActiveRuleId(null);
+      return;
+    }
     try {
       setLoadingRules(true);
       const data = await alertApi.rules.list();
@@ -106,15 +115,17 @@ function AlertsCenter() {
       .catch(() => setMetrics([]));
     missionApi.list().then(setMissions).catch(() => setMissions([]));
     loadRules();
-  }, []);
+  }, [isSuperAdmin]);
 
   useEffect(() => {
-    if (activeRuleId != null) {
+    if (!isSuperAdmin) {
+      loadRecords(undefined, recordMissionCodes);
+    } else if (activeRuleId != null) {
       loadRecords(activeRuleId, recordMissionCodes);
     } else {
       setRecords([]);
     }
-  }, [activeRuleId, recordMissionCodes]);
+  }, [activeRuleId, isSuperAdmin, recordMissionCodes]);
 
   const metricOptions = metrics.map(metric => ({ label: `${metric.name} (${metric.metricCode})`, value: metric.metricCode }));
   const templateOptions = templates.map(template => ({
@@ -297,11 +308,11 @@ function AlertsCenter() {
   ];
 
   const visibleConfigs = configMode === 'template' ? templates : rules;
-  const activeModeLabel = configMode === 'template' ? '模板配置' : '普通规则配置';
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16, minHeight: '100vh' }}>
       <Row gutter={[16, 16]} style={{ flex: 1, minHeight: '80vh', height: '100%' }}>
+        {isSuperAdmin ? (
         <Col xs={24} lg={9} style={{ height: '100%', display: 'flex' }}>
           <Card
             title="告警配置"
@@ -393,9 +404,11 @@ function AlertsCenter() {
             )}
           </Card>
         </Col>
+        ) : null}
 
-        <Col xs={24} lg={15} style={{ height: '100%', display: 'flex' }}>
-          {configMode === 'rule' ? (
+        <Col xs={24} lg={isSuperAdmin ? 15 : 24} style={{ height: '100%', display: 'flex' }}>
+          {isSuperAdmin ? (
+          configMode === 'rule' ? (
             <Card
               title="报警记录"
               style={{ width: '100%' }}
@@ -441,10 +454,44 @@ function AlertsCenter() {
                 </Typography.Paragraph>
               </Space>
             </Card>
+          )
+          ) : (
+            <Card
+              title="待处理报警记录"
+              style={{ width: '100%' }}
+              bodyStyle={{ height: '100%', display: 'flex', flexDirection: 'column' }}
+              loading={loadingRecords}
+              extra={
+                <Select
+                  mode="multiple"
+                  allowClear
+                  maxTagCount={2}
+                  style={{ minWidth: 320, maxWidth: '100%' }}
+                  placeholder="按我的任务筛选待处理报警"
+                  value={recordMissionCodes}
+                  options={missionOptions}
+                  onChange={value => setRecordMissionCodes(value)}
+                />
+              }
+            >
+              <Typography.Paragraph type="secondary">
+                当前仅展示与你负责任务相关、且仍待处理的报警记录。
+              </Typography.Paragraph>
+              <Table
+                rowKey="id"
+                dataSource={records}
+                columns={columns}
+                pagination={{ pageSize: 10 }}
+                scroll={{ x: 'max-content' }}
+                style={{ width: '100%' }}
+                locale={{ emptyText: '当前没有待处理报警记录' }}
+              />
+            </Card>
           )}
         </Col>
       </Row>
 
+      {isSuperAdmin ? (
       <Modal
         title={
           editingRule
@@ -602,6 +649,7 @@ function AlertsCenter() {
           </Form.List>
         </Form>
       </Modal>
+      ) : null}
     </div>
   );
 }

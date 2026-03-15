@@ -35,6 +35,7 @@ import {
   type AlertRule
 } from '../services/api';
 import { connectTelemetrySocket, getTelemetryWebSocketUrl } from '../services/ws';
+import { useAuth } from '../context/AuthContext';
 
 const pointsEqual = (a: LatLngTuple, b: LatLngTuple) =>
   Math.abs(a[0] - b[0]) < 1e-6 && Math.abs(a[1] - b[1]) < 1e-6;
@@ -49,6 +50,7 @@ function RouteClickHandler({ onAddPoint }: { onAddPoint: (point: LatLngTuple) =>
 }
 
 function MissionCommander() {
+  const { currentUser } = useAuth();
   const [missions, setMissions] = useState<MissionDto[]>([]);
   const [selectedMissionIds, setSelectedMissionIds] = useState<number[]>([]);
   const [monitoringMissionCode, setMonitoringMissionCode] = useState<string | null>(null);
@@ -102,7 +104,7 @@ function MissionCommander() {
     fleetApi.available().then(setAvailableUavs).catch(() => setAvailableUavs([]));
     userApi.list().then(setUsers).catch(() => setUsers([]));
     alertApi.rules
-      .list()
+      .options()
       .then(data => setAlertRules(data.filter(rule => !rule.templateEnabled)))
       .catch(() => setAlertRules([]));
     const telemetryClient = connectTelemetrySocket({
@@ -149,6 +151,13 @@ function MissionCommander() {
       telemetryClient.deactivate();
     };
   }, []);
+
+  useEffect(() => {
+    if (currentUser?.role === 'superadmin') {
+      return;
+    }
+    form.setFieldsValue({ pilotUsername: currentUser?.username });
+  }, [currentUser, form]);
 
   useEffect(() => {
     const socket = new WebSocket(getTelemetryWebSocketUrl());
@@ -227,6 +236,7 @@ function MissionCommander() {
       label: `${u.name} (${u.role})`
     }));
   }, [users]);
+  const currentUserIsAdmin = currentUser?.role === 'superadmin';
 
   const routeIsClosed =
     routeDraft.length > 2 && pointsEqual(routeDraft[0], routeDraft[routeDraft.length - 1]);
@@ -600,7 +610,11 @@ function MissionCommander() {
             label="责任人"
             rules={[{ required: true, message: '请选择责任人' }]}
           >
-            <Select options={pilotOptions} placeholder="选择责任人" />
+            <Select
+              options={pilotOptions}
+              placeholder={currentUserIsAdmin ? '选择责任人' : '当前登录执行者'}
+              disabled={!currentUserIsAdmin}
+            />
           </Form.Item>
           <Form.Item
             name="priority"

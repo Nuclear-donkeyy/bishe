@@ -94,6 +94,13 @@ function FleetCenter() {
     return () => client.deactivate();
   }, []);
 
+  useEffect(() => {
+    if (currentUser?.role === 'superadmin') {
+      return;
+    }
+    form.setFieldsValue({ pilotUsername: currentUser?.username });
+  }, [currentUser, form]);
+
   const visibleFleet = useMemo(() => {
     if (currentUser?.role === 'superadmin') return fleet;
     return fleet.filter(item => item.pilotName === currentUser?.name);
@@ -304,8 +311,9 @@ function FleetCenter() {
           >
             <Select
               options={userOptions}
-              placeholder="选择责任人（操作员/超级管理员）"
+              placeholder={currentUser?.role === 'superadmin' ? '选择责任人（操作员/超级管理员）' : '当前登录执行者'}
               showSearch
+              disabled={currentUser?.role !== 'superadmin'}
               filterOption={(input, option) =>
                 (option?.label as string).toLowerCase().includes(input.toLowerCase())
               }

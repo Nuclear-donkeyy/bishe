@@ -38,9 +38,7 @@ function App() {
         {currentUser.role === 'superadmin' ? (
           <Route path="/config-center" element={<ConfigCenter />} />
         ) : null}
-        {currentUser.role === 'superadmin' ? (
-          <Route path="/alerts" element={<AlertsCenter />} />
-        ) : null}
+        <Route path="/alerts" element={<AlertsCenter />} />
       </Route>
       <Route path="/login" element={<Navigate to="/dashboard" replace />} />
     </Routes>

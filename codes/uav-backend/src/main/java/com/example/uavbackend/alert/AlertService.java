@@ -5,6 +5,10 @@ import com.example.uavbackend.alert.dto.AlertRecordDto;
 import com.example.uavbackend.alert.dto.AlertRuleCreateRequest;
 import com.example.uavbackend.alert.dto.AlertRuleDto;
 import com.example.uavbackend.alert.dto.ConditionDto;
+import com.example.uavbackend.auth.AccessScope;
+import com.example.uavbackend.auth.AccessScopeService;
+import com.example.uavbackend.mission.Mission;
+import com.example.uavbackend.mission.MissionMapper;
 import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
@@ -22,16 +26,32 @@ public class AlertService {
   private final AlertRuleMapper ruleMapper;
   private final AlertRuleConditionMapper conditionMapper;
   private final AlertRecordMapper recordMapper;
+  private final MissionMapper missionMapper;
+  private final AccessScopeService accessScopeService;
 
   public List<AlertRuleDto> listRules() {
+    AccessScope scope = accessScopeService.currentScope();
+    if (!scope.superAdmin()) {
+      return List.of();
+    }
     List<AlertRule> rules = ruleMapper.selectList(new LambdaQueryWrapper<>());
     return mapRules(rules);
   }
 
   public List<AlertRuleDto> listTemplates() {
+    AccessScope scope = accessScopeService.currentScope();
+    if (!scope.superAdmin()) {
+      return List.of();
+    }
     List<AlertRule> templates =
         ruleMapper.selectList(new LambdaQueryWrapper<AlertRule>().eq(AlertRule::getTemplateEnabled, true));
     return mapRules(templates);
+  }
+
+  public List<AlertRuleDto> listAssignableRules() {
+    List<AlertRule> rules =
+        ruleMapper.selectList(new LambdaQueryWrapper<AlertRule>().eq(AlertRule::getTemplateEnabled, false));
+    return mapRules(rules);
   }
 
   private List<AlertRuleDto> mapRules(List<AlertRule> rules) {
@@ -48,6 +68,7 @@ public class AlertService {
   }
 
   public List<AlertRecordDto> listRecords(Long ruleId, List<String> missionCodes) {
+    AccessScope scope = accessScopeService.currentScope();
     LambdaQueryWrapper<AlertRecord> wrapper = new LambdaQueryWrapper<>();
     if (ruleId != null) {
       wrapper.eq(AlertRecord::getRuleId, ruleId);
@@ -58,12 +79,21 @@ public class AlertService {
         wrapper.in(AlertRecord::getMissionCode, normalizedMissionCodes);
       }
     }
+    if (!scope.superAdmin()) {
+      wrapper.eq(AlertRecord::getProcessed, false);
+      List<String> accessibleMissionCodes = loadAccessibleMissionCodes(scope);
+      if (accessibleMissionCodes.isEmpty()) {
+        return List.of();
+      }
+      wrapper.in(AlertRecord::getMissionCode, accessibleMissionCodes);
+    }
     wrapper.orderByDesc(AlertRecord::getTriggeredAt);
     return recordMapper.selectList(wrapper).stream().map(this::toRecordDto).toList();
   }
 
   @Transactional
   public AlertRuleDto createRule(AlertRuleCreateRequest req) {
+    ensureSuperAdmin();
     if (Boolean.TRUE.equals(req.templateEnabled())) {
       AlertRule template = new AlertRule();
       applyTemplateFields(template, req);
@@ -85,6 +115,7 @@ public class AlertService {
 
   @Transactional
   public AlertRuleDto updateRule(Long ruleId, AlertRuleCreateRequest req) {
+    ensureSuperAdmin();
     AlertRule rule = ruleMapper.selectById(ruleId);
     if (rule == null) {
       throw new IllegalArgumentException("规则不存在");
@@ -108,6 +139,7 @@ public class AlertService {
 
   @Transactional
   public void deleteRule(Long ruleId) {
+    ensureSuperAdmin();
     AlertRule rule = ruleMapper.selectById(ruleId);
     if (rule != null && Boolean.TRUE.equals(rule.getTemplateEnabled())) {
       Long referencedCount =
@@ -123,8 +155,12 @@ public class AlertService {
 
   @Transactional
   public void markRecordProcessed(Long recordId) {
+    AccessScope scope = accessScopeService.currentScope();
     AlertRecord record = recordMapper.selectById(recordId);
     if (record == null) return;
+    if (!scope.superAdmin() && !canAccessAlertRecord(scope, record)) {
+      throw new IllegalArgumentException("无权处理该报警记录");
+    }
     record.setProcessed(true);
     record.setProcessedAt(LocalDateTime.now());
     recordMapper.updateById(record);
@@ -298,5 +334,37 @@ public class AlertService {
         r.getLinkageStatus(),
         r.getLinkageSummary(),
         r.getNotificationStatus());
+  }
+
+  private void ensureSuperAdmin() {
+    if (!accessScopeService.isSuperAdmin()) {
+      throw new IllegalArgumentException("无权操作报警规则");
+    }
+  }
+
+  private boolean canAccessAlertRecord(AccessScope scope, AlertRecord record) {
+    if (scope.superAdmin()) {
+      return true;
+    }
+    if (record == null || trimToNull(record.getMissionCode()) == null) {
+      return false;
+    }
+    Mission mission =
+        missionMapper.selectOne(
+            new LambdaQueryWrapper<Mission>()
+                .eq(Mission::getMissionCode, record.getMissionCode())
+                .last("limit 1"));
+    return mission != null && scope.displayName().equals(mission.getPilotName());
+  }
+
+  private List<String> loadAccessibleMissionCodes(AccessScope scope) {
+    if (scope.superAdmin()) {
+      return List.of();
+    }
+    return missionMapper
+        .selectList(new LambdaQueryWrapper<Mission>().eq(Mission::getPilotName, scope.displayName()))
+        .stream()
+        .map(Mission::getMissionCode)
+        .toList();
   }
 }

@@ -25,6 +25,11 @@ public class AlertController {
     return alertService.listTemplates();
   }
 
+  @GetMapping("/rule-options")
+  public List<AlertRuleDto> listRuleOptions() {
+    return alertService.listAssignableRules();
+  }
+
   @PostMapping("/rules")
   public ResponseEntity<AlertRuleDto> createRule(@Valid @RequestBody AlertRuleCreateRequest req) {
     return ResponseEntity.status(201).body(alertService.createRule(req));

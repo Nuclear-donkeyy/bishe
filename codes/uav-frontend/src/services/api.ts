@@ -422,6 +422,7 @@ export interface AlertRulePayload {
 export const alertApi = {
   rules: {
     list: () => http.get<AlertRule[]>('/alerts/rules').then(r => r.data),
+    options: () => http.get<AlertRule[]>('/alerts/rule-options').then(r => r.data),
     create: (payload: AlertRulePayload) =>
       http.post<AlertRule>('/alerts/rules', payload).then(r => ensureSuccess<AlertRule>(r.data, '创建报警规则失败')),
     update: (id: number, payload: AlertRulePayload) =>
