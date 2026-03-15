@@ -116,7 +116,7 @@ function renderLinkageTag(value?: string) {
   if (value === 'PARTIAL') return <Tag color="gold">部分成功</Tag>;
   if (value === 'FAILED') return <Tag color="red">失败</Tag>;
   if (value === 'SKIPPED') return <Tag>跳过</Tag>;
-  if (value === 'PLACEHOLDER') return <Tag color="blue">占位发送</Tag>;
+  if (value === 'PLACEHOLDER') return <Tag color="blue">通知预留</Tag>;
   if (value === 'PENDING') return <Tag color="processing">处理中</Tag>;
   return <Tag>{value}</Tag>;
 }
@@ -1156,14 +1156,11 @@ function DataAnalytics() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <Card
+        className="hero-card"
         style={{
-          border: 'none',
-          background:
-            'linear-gradient(135deg, rgba(15,118,110,0.98) 0%, rgba(2,132,199,0.94) 52%, rgba(15,23,42,0.96) 100%)',
           color: '#f8fafc',
           overflow: 'hidden'
         }}
-        bodyStyle={{ padding: 28 }}
       >
         <Space direction="vertical" size={8} style={{ width: '100%' }}>
           <Typography.Title level={3} style={{ color: '#f8fafc', margin: 0 }}>
@@ -1227,7 +1224,6 @@ function DataAnalytics() {
             <Button icon={<DownloadOutlined />} onClick={exportExcel} disabled={!data.length && !parsedExecutions.length}>
               导出 Excel
             </Button>
-            <Tag color="blue">图表由 analytics_definitions 和执行数据共同驱动</Tag>
           </Space>
         </Form>
       </Card>

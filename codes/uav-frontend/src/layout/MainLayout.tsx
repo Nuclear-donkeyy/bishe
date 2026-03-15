@@ -42,20 +42,22 @@ function MainLayout() {
   }, [menuItems, location.pathname]);
 
   return (
-    <Layout style={{ minHeight: '100vh' }}>
-      <Sider breakpoint="lg" collapsedWidth="0">
-        <div
-          style={{
-            padding: '16px 24px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            color: '#fff',
-            fontWeight: 600,
-            fontSize: 16
-          }}
-        >
-          UAV · Monitor
+    <Layout className="app-shell">
+      <Sider breakpoint="lg" collapsedWidth="0" width={256} className="app-sidebar">
+        <div className="app-brand">
+          <Space direction="vertical" size={10} style={{ width: '100%' }}>
+            <Space size={12} align="center">
+              <div className="app-brand-mark">U</div>
+              <Space direction="vertical" size={0}>
+                <Typography.Text style={{ color: '#f4f8ff', fontSize: 18, fontWeight: 800 }}>
+                  UAV Monitor
+                </Typography.Text>
+                <Typography.Text style={{ color: 'rgba(221, 233, 255, 0.74)', fontSize: 12 }}>
+                  智能调度与环境监测平台
+                </Typography.Text>
+              </Space>
+            </Space>
+          </Space>
         </div>
         <Menu
           theme="dark"
@@ -66,37 +68,44 @@ function MainLayout() {
           style={{ fontSize: 16 }}
         />
       </Sider>
-      <Layout style={{ height: '100vh' }}>
+      <Layout style={{ height: '100vh', background: 'transparent' }}>
         <Header
+          className="app-header"
           style={{
-            background: '#fff',
-            boxShadow: '0 1px 4px rgba(0, 0, 0, 0.08)',
             zIndex: 9,
-            paddingInline: 24,
             display: 'flex',
             alignItems: 'center',
-            justifyContent: 'space-between'
+            justifyContent: 'space-between',
+            minHeight: 86,
+            height: 'auto',
+            gap: 16,
+            flexWrap: 'wrap',
+            paddingBlock: 14
           }}
         >
-          <Typography.Title level={4} style={{ margin: 0 }}>
-            无人机环境监测 · 控制台
-          </Typography.Title>
+          <Space direction="vertical" size={0} style={{ flex: 1, minWidth: 260 }}>
+            <Typography.Title level={4} className="page-title">
+              无人机环境监测控制台
+            </Typography.Title>
+            <Typography.Text className="page-subtitle">
+              调度、监控、分析与告警联动统一工作台
+            </Typography.Text>
+          </Space>
           {currentUser ? (
-            <Space size="middle">
-              <Typography.Text>{currentUser.name}</Typography.Text>
+            <div className="app-userbar">
+              <div className="app-usermeta">
+                <Typography.Text className="app-username">{currentUser.name}</Typography.Text>
+                <Typography.Text className="app-userrole">
+                  {currentUser.role === 'superadmin' ? '系统管理员' : '业务操作员'}
+                </Typography.Text>
+              </div>
               <Button size="small" onClick={logout}>
                 退出
               </Button>
-            </Space>
+            </div>
           ) : null}
         </Header>
-        <Content
-          style={{
-            margin: '24px',
-            height: 'calc(100vh - 112px)',
-            overflow: 'auto'
-          }}
-        >
+        <Content className="page-surface">
           <Outlet />
         </Content>
       </Layout>

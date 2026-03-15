@@ -250,7 +250,7 @@ function AlertsCenter() {
     if (value === 'PARTIAL') return <Tag color="gold">部分成功</Tag>;
     if (value === 'FAILED') return <Tag color="red">失败</Tag>;
     if (value === 'SKIPPED') return <Tag>跳过</Tag>;
-    if (value === 'PLACEHOLDER') return <Tag color="blue">占位发送</Tag>;
+    if (value === 'PLACEHOLDER') return <Tag color="blue">通知预留</Tag>;
     if (value === 'PENDING') return <Tag color="processing">处理中</Tag>;
     return <Tag>{value}</Tag>;
   };
@@ -395,67 +395,53 @@ function AlertsCenter() {
         </Col>
 
         <Col xs={24} lg={15} style={{ height: '100%', display: 'flex' }}>
-          <Card
-            title={activeModeLabel}
-            extra={
-              configMode === 'rule' ? (
-                <Typography.Text type="secondary">任务创建时仅可绑定普通规则</Typography.Text>
+          {configMode === 'rule' ? (
+            <Card
+              title="报警记录"
+              style={{ width: '100%' }}
+              bodyStyle={{ height: '100%', display: 'flex', flexDirection: 'column' }}
+              loading={loadingRecords}
+              extra={
+                <Select
+                  mode="multiple"
+                  allowClear
+                  maxTagCount={2}
+                  style={{ minWidth: 320, maxWidth: '100%' }}
+                  placeholder="按单个或多个任务筛选报警记录"
+                  value={recordMissionCodes}
+                  options={missionOptions}
+                  onChange={value => setRecordMissionCodes(value)}
+                />
+              }
+            >
+              {activeRuleId ? (
+                <Table
+                  rowKey="id"
+                  dataSource={records}
+                  columns={columns}
+                  pagination={{ pageSize: 10 }}
+                  scroll={{ x: 'max-content' }}
+                  style={{ width: '100%' }}
+                />
               ) : (
-                <Typography.Text type="secondary">模板用于提供基础配置</Typography.Text>
-              )
-            }
-            style={{ width: '100%' }}
-            bodyStyle={{ height: '100%', display: 'flex', flexDirection: 'column', gap: 16 }}
-          >
-            {configMode === 'rule' ? (
-              <Card
-                size="small"
-                title="报警记录"
-                style={{ flex: 1 }}
-                bodyStyle={{ height: '100%', display: 'flex', flexDirection: 'column' }}
-                loading={loadingRecords}
-                extra={
-                  <Select
-                    mode="multiple"
-                    allowClear
-                    maxTagCount={2}
-                    style={{ minWidth: 320 }}
-                    placeholder="按单个或多个任务筛选报警记录"
-                    value={recordMissionCodes}
-                    options={missionOptions}
-                    onChange={value => setRecordMissionCodes(value)}
-                  />
-                }
-              >
-                {activeRuleId ? (
-                  <Table
-                    rowKey="id"
-                    dataSource={records}
-                    columns={columns}
-                    pagination={{ pageSize: 10 }}
-                    scroll={{ x: 1080 }}
-                    style={{ flex: 1 }}
-                  />
-                ) : (
-                  <Empty description="请选择一条普通规则查看报警记录" />
-                )}
-              </Card>
-            ) : (
-              <Card size="small" title="模板说明" style={{ flex: 1 }}>
-                <Space direction="vertical" size={12}>
-                  <Typography.Paragraph style={{ marginBottom: 0 }}>
-                    模板用于沉淀告警条件、联动动作和通知基础参数，适合作为团队内可复用的标准配置。
-                  </Typography.Paragraph>
-                  <Typography.Paragraph style={{ marginBottom: 0 }}>
-                    普通规则在创建时可选择模板，系统会自动带入模板基础配置，随后再按业务场景继续调整阈值、通知对象和联动开关。
-                  </Typography.Paragraph>
-                  <Typography.Paragraph style={{ marginBottom: 0 }}>
-                    任务创建页只展示普通规则；即使前端绕过选择，后端也会阻止模板被直接绑定到任务。
-                  </Typography.Paragraph>
-                </Space>
-              </Card>
-            )}
-          </Card>
+                <Empty description="请选择一条普通规则查看报警记录" />
+              )}
+            </Card>
+          ) : (
+            <Card title="模板说明" style={{ width: '100%' }}>
+              <Space direction="vertical" size={12}>
+                <Typography.Paragraph style={{ marginBottom: 0 }}>
+                  模板用于沉淀告警条件、联动动作和通知基础参数，适合作为团队内可复用的标准配置。
+                </Typography.Paragraph>
+                <Typography.Paragraph style={{ marginBottom: 0 }}>
+                  普通规则在创建时可选择模板，系统会自动带入模板基础配置，随后再按业务场景继续调整阈值、通知对象和联动开关。
+                </Typography.Paragraph>
+                <Typography.Paragraph style={{ marginBottom: 0 }}>
+                  任务创建页只展示普通规则；即使前端绕过选择，后端也会阻止模板被直接绑定到任务。
+                </Typography.Paragraph>
+              </Space>
+            </Card>
+          )}
         </Col>
       </Row>
 
