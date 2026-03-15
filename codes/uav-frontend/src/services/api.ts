@@ -152,6 +152,99 @@ export interface TaskExecutionDto {
   metrics: string;
 }
 
+export interface MissionComparisonDto {
+  missionCode: string;
+  missionName: string;
+  missionType: string;
+  status?: string;
+  pilotName?: string;
+  uavCode?: string;
+  startTime?: string;
+  endTime?: string;
+  durationMinutes?: number;
+  avgSpeedKmh?: number;
+  batteryConsumption?: number;
+  alertCount?: number;
+  successRate?: number;
+  dataAvg: Record<string, any>;
+  dataMax: Record<string, any>;
+  dataMin: Record<string, any>;
+}
+
+export interface AnalyticsMetricOptionDto {
+  metricCode: string;
+  displayName: string;
+  unit?: string;
+}
+
+export interface AnalyticsSeriesPointDto {
+  timestamp: string;
+  value: number;
+}
+
+export interface AnalyticsSeriesDto {
+  metricCode: string;
+  displayName: string;
+  unit?: string;
+  points: AnalyticsSeriesPointDto[];
+}
+
+export interface AnalyticsTimeSeriesDto {
+  missionCode: string;
+  missionName: string;
+  missionType: string;
+  uavCode?: string;
+  startTime?: string;
+  endTime?: string;
+  metricOptions: AnalyticsMetricOptionDto[];
+  series: AnalyticsSeriesDto[];
+}
+
+export interface AnalyticsReplayPointDto {
+  seq?: number;
+  lat?: number;
+  lng?: number;
+  altitude?: number;
+  source: 'PLANNED' | 'ACTUAL' | string;
+  timestamp?: string;
+}
+
+export interface AnalyticsReplayEventDto {
+  category: string;
+  eventType: string;
+  title: string;
+  description?: string;
+  occurredAt?: string;
+}
+
+export interface AnalyticsReplaySampleDto {
+  reportedAt: string;
+  lat?: number;
+  lng?: number;
+  altitude?: number;
+  batteryPercent?: number;
+  velocityMs?: number;
+  metrics: Record<string, any>;
+}
+
+export interface AnalyticsReplayDto {
+  missionCode: string;
+  missionName: string;
+  missionType: string;
+  status?: string;
+  uavCode?: string;
+  startTime?: string;
+  endTime?: string;
+  durationMinutes?: number;
+  distanceKm?: number;
+  sampleCount?: number;
+  metricOptions: AnalyticsMetricOptionDto[];
+  plannedRoute: AnalyticsReplayPointDto[];
+  actualTrack: AnalyticsReplayPointDto[];
+  timeline: AnalyticsReplayEventDto[];
+  samples: AnalyticsReplaySampleDto[];
+}
+
 export interface MissionDataRecord {
   id: number;
   missionId: number;
@@ -174,6 +267,12 @@ export const analyticsApi = {
     http
       .get<TaskExecutionDto[]>('/analytics/task-executions', { params: { missionType, from, to } })
       .then(r => r.data),
+  compare: (missionCodes: string[]) =>
+    http.post<MissionComparisonDto[]>('/analytics/compare', { missionCodes }).then(r => r.data),
+  replay: (missionCode: string) =>
+    http.get<AnalyticsReplayDto>('/analytics/replay', { params: { missionCode } }).then(r => r.data),
+  timeseries: (missionCode: string, metrics?: string[]) =>
+    http.get<AnalyticsTimeSeriesDto>('/analytics/timeseries', { params: { missionCode, metrics } }).then(r => r.data),
   data: (params: {
     missionType: string;
     uavCode?: string;

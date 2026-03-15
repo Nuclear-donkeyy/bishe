@@ -11,6 +11,32 @@ from paho.mqtt import client as mqtt
 BROKER_HOST = "localhost"
 BROKER_PORT = 1883
 
+SENSOR_BASELINES = {
+    "SURFACE_TEMP": 58.0,
+    "SMOKE_INDEX": 36.0,
+    "FIRE_POINT_COUNT": 0.5,
+    "PM25": 52.0,
+    "CO2": 680.0,
+    "WIND_SPEED": 5.2,
+    "CORONA_INTENSITY": 22.0,
+    "LINE_TEMP": 46.0,
+    "BATTERY": 80.0,
+    "VELOCITY_MS": 24.0,
+}
+
+SENSOR_AMPLITUDES = {
+    "SURFACE_TEMP": 8.0,
+    "SMOKE_INDEX": 10.0,
+    "FIRE_POINT_COUNT": 1.5,
+    "PM25": 16.0,
+    "CO2": 120.0,
+    "WIND_SPEED": 2.2,
+    "CORONA_INTENSITY": 8.0,
+    "LINE_TEMP": 9.0,
+    "BATTERY": 1.0,
+    "VELOCITY_MS": 4.0,
+}
+
 
 class UavSimulator:
     def __init__(self, uavcode: str, init_batt: float, init_lat: float, init_lng: float, sensors: str = ""):
@@ -30,7 +56,6 @@ class UavSimulator:
         self.lock = threading.Lock()
 
         self.sensor_keys = [s.strip() for s in sensors.split(",") if s.strip()]
-        self.sensor_state = {key: 50.0 for key in self.sensor_keys}
 
         self.client = mqtt.Client(client_id=f"UAV-{uavcode}", protocol=mqtt.MQTTv311)
         self.client.on_connect = self._on_connect
@@ -106,27 +131,80 @@ class UavSimulator:
         else:
             self.lat += dlat / dist * step_deg
             self.lng += dlng / dist * step_deg
-        self.battery = max(0, self.battery - 0.05)
+        self.battery = max(0, self.battery - (0.08 if self.state == "EXECUTING" else 0.04))
+        target_alt = 110.0 if self.state == "EXECUTING" else 55.0
+        self.alt += (target_alt - self.alt) * 0.35
+
+    def _sensor_value(self, key: str, now_ts: float, index: int) -> float:
+        base = SENSOR_BASELINES.get(key, 50.0)
+        amplitude = SENSOR_AMPLITUDES.get(key, 3.0)
+        value = base + math.sin(now_ts / 5.0 + index) * amplitude
+
+        if self.state == "EXECUTING":
+            if key in ("SURFACE_TEMP", "LINE_TEMP"):
+                value += 4.0
+            elif key in ("SMOKE_INDEX", "PM25", "CO2", "CORONA_INTENSITY"):
+                value += amplitude * 0.35
+            elif key == "FIRE_POINT_COUNT":
+                value = max(0.0, round(value))
+
+        if key == "BATTERY":
+            value = self.battery
+        elif key == "VELOCITY_MS":
+            value = self.speed_mps if self.state != "IDLE" else 0.0
+        elif key == "WIND_SPEED":
+            value = max(0.5, value)
+        elif key == "CO2":
+            value = max(380.0, value)
+        elif key in ("SMOKE_INDEX", "PM25", "CORONA_INTENSITY"):
+            value = max(0.0, value)
+        elif key in ("SURFACE_TEMP", "LINE_TEMP"):
+            value = max(20.0, value)
+        elif key == "FIRE_POINT_COUNT":
+            value = min(max(0.0, value), 5.0)
+        return value
+
+    def _link_quality(self) -> str:
+        dist_km = math.hypot(self.lat - self.home_lat, self.lng - self.home_lng) * 111
+        if dist_km < 0.6:
+            return "优"
+        if dist_km < 1.5:
+            return "良"
+        return "中"
 
     def _build_payload(self):
-        # 构建传感器数据（data），模拟数值上下波动
+        now_ts = time.time()
         sensors = {}
-        for key in self.sensor_keys:
-            base = self.sensor_state.get(key, 50.0)
-            drift = math.sin(time.time()) * 2
-            val = max(0, base + drift)
-            self.sensor_state[key] = val
-            sensors[key] = round(val, 2)
+        for index, key in enumerate(self.sensor_keys):
+            value = self._sensor_value(key, now_ts, index)
+            if key == "FIRE_POINT_COUNT":
+                sensors[key] = int(round(max(0.0, value)))
+            else:
+                sensors[key] = round(value, 2)
+        data = {
+            **sensors,
+            "battery": round(self.battery, 1),
+            "velocityMs": round(self.speed_mps if self.state != "IDLE" else 0.0, 2),
+            "altitude": round(self.alt, 1),
+        }
+        range_km = round(math.hypot(self.lat - self.home_lat, self.lng - self.home_lng) * 111, 2)
         return {
             "uavCode": self.uavcode,
             "missionId": self.mission_id,
             "status": self.state,
             "lat": self.lat,
             "lng": self.lng,
+            "alt": round(self.alt, 1),
             "battery": round(self.battery, 1),
+            "batteryPercent": round(self.battery, 1),
+            "speed": round(self.speed_mps if self.state != "IDLE" else 0.0, 2),
+            "velocityMs": round(self.speed_mps if self.state != "IDLE" else 0.0, 2),
+            "healthScore": 86 if self.state == "EXECUTING" else 92,
+            "linkQuality": self._link_quality(),
+            "rangeKm": range_km,
             "sensors": sensors,
-            "data": sensors,
-            "ts": time.time(),
+            "data": data,
+            "ts": now_ts,
         }
 
     def run(self):

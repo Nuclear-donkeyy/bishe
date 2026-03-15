@@ -84,6 +84,29 @@ public class MissionQueueService {
     redisTemplate.delete(KEY_PREFIX + missionCode);
   }
 
+  public void restoreQueuedMission(
+      Mission mission, List<List<Double>> route, List<String> candidateUavCodes, String reason) {
+    if (mission == null || !StringUtils.hasText(mission.getMissionCode())) {
+      return;
+    }
+    if (loadQueueItem(mission.getMissionCode()).isPresent()) {
+      return;
+    }
+    long enqueuedAt =
+        mission.getCreatedAt() == null ? Instant.now().toEpochMilli() : mission.getCreatedAt().toEpochMilli();
+    MissionQueueItem item =
+        buildQueueItemFromMission(
+            mission,
+            route == null ? List.of() : route,
+            candidateUavCodes == null ? List.of() : candidateUavCodes,
+            mission.getPriority(),
+            enqueuedAt,
+            MissionStatus.PREEMPTED.name().equalsIgnoreCase(mission.getStatus()) ? 1 : 0,
+            null,
+            reason);
+    saveQueueItem(item);
+  }
+
   @Scheduled(fixedDelay = 3000)
   public void processQueue() {
     reconcileRunningMissionStates();

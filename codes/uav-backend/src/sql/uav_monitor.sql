@@ -361,6 +361,30 @@ CREATE TABLE `uav_devices`  (
 ) ENGINE = InnoDB AUTO_INCREMENT = 3 CHARACTER SET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci ROW_FORMAT = Dynamic;
 
 -- ----------------------------
+-- Table structure for uav_telemetry
+-- ----------------------------
+DROP TABLE IF EXISTS `uav_telemetry`;
+CREATE TABLE `uav_telemetry`  (
+  `id` bigint UNSIGNED NOT NULL AUTO_INCREMENT,
+  `uav_id` bigint UNSIGNED NOT NULL,
+  `session_code` varchar(128) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NULL DEFAULT NULL,
+  `reported_at` datetime NOT NULL,
+  `battery_percent` int NULL DEFAULT NULL,
+  `range_km` decimal(8, 2) NULL DEFAULT NULL,
+  `location_lat` decimal(9, 6) NULL DEFAULT NULL,
+  `location_lng` decimal(9, 6) NULL DEFAULT NULL,
+  `location_alt` decimal(8, 2) NULL DEFAULT NULL,
+  `velocity_ms` decimal(8, 2) NULL DEFAULT NULL,
+  `payload` json NULL,
+  `raw_message` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`) USING BTREE,
+  INDEX `idx_uav_telemetry_uav_time`(`uav_id` ASC, `reported_at` ASC) USING BTREE,
+  INDEX `idx_uav_telemetry_session_time`(`session_code` ASC, `reported_at` ASC) USING BTREE
+) ENGINE = InnoDB CHARACTER SET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci ROW_FORMAT = Dynamic;
+
+-- ----------------------------
 -- Table structure for uav_sensors
 -- ----------------------------
 DROP TABLE IF EXISTS `uav_sensors`;

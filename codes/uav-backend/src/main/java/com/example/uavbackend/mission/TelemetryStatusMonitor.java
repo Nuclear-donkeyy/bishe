@@ -63,6 +63,16 @@ public class TelemetryStatusMonitor {
                       .eq(Mission::getId, missionId));
           if (mission != null && node.has("data") && node.get("data").isObject()) {
             Map<String, Object> dataMap = objectMapper.convertValue(node.get("data"), Map.class);
+            if (node.hasNonNull("battery")) {
+              dataMap.put("battery", node.get("battery").asDouble());
+            } else if (node.hasNonNull("batteryPercent")) {
+              dataMap.put("batteryPercent", node.get("batteryPercent").asDouble());
+            }
+            if (node.hasNonNull("speed")) {
+              dataMap.put("speed", node.get("speed").asDouble());
+            } else if (node.hasNonNull("velocityMs")) {
+              dataMap.put("velocityMs", node.get("velocityMs").asDouble());
+            }
             dataAggregator.ingest(mission, uavCode, dataMap);
           }
         }

@@ -51,6 +51,25 @@ CREATE TABLE IF NOT EXISTS uav_devices (
     KEY idx_uav_status (status)
 );
 
+CREATE TABLE IF NOT EXISTS uav_telemetry (
+    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+    uav_id BIGINT UNSIGNED NOT NULL,
+    session_code VARCHAR(128) NULL,
+    reported_at DATETIME NOT NULL,
+    battery_percent INT NULL,
+    range_km DECIMAL(8,2) NULL,
+    location_lat DECIMAL(9,6) NULL,
+    location_lng DECIMAL(9,6) NULL,
+    location_alt DECIMAL(8,2) NULL,
+    velocity_ms DECIMAL(8,2) NULL,
+    payload JSON NULL,
+    raw_message LONGTEXT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    KEY idx_uav_telemetry_uav_time (uav_id, reported_at),
+    KEY idx_uav_telemetry_session_time (session_code, reported_at)
+);
+
 CREATE TABLE IF NOT EXISTS mission_types (
     id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
     type_code VARCHAR(64) NOT NULL UNIQUE,

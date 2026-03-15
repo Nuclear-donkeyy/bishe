@@ -46,6 +46,7 @@ public class MqttConfig {
 
   private final FleetService fleetService;
   private final TelemetryService telemetryService;
+  private final com.example.uavbackend.fleet.TelemetryHistoryService telemetryHistoryService;
 
   @Bean
   public MqttConnectOptions mqttConnectOptions() {
@@ -98,6 +99,7 @@ public class MqttConfig {
       }
       try {
         telemetryService.upsertTelemetry(uavCode, payload);
+        telemetryHistoryService.recordSample(uavCode, payload);
 //        log.info("MQTT telemetry received, topic={}, uavCode={}, cachedToRedis=true", topic, uavCode);
       } catch (Exception e) {
         log.error("MQTT telemetry handling failed, topic={}, uavCode={}, payload={}", topic, uavCode, payload, e);
