@@ -10,6 +10,7 @@ import DataAnalytics from './pages/DataAnalytics';
 import ConfigCenter from './pages/ConfigCenter';
 import AlertsCenter from './pages/AlertsCenter';
 import { useAuth } from './context/AuthContext';
+import { canManagePersonnel, isSuperAdmin } from './utils/roles';
 
 function App() {
   const { currentUser } = useAuth();
@@ -32,10 +33,10 @@ function App() {
         <Route path="/missions" element={<MissionCommander />} />
         <Route path="/monitoring" element={<Monitoring />} />
         <Route path="/analytics" element={<DataAnalytics />} />
-        {currentUser.role === 'superadmin' ? (
+        {canManagePersonnel(currentUser.role) ? (
           <Route path="/personnel" element={<PersonnelManagement />} />
         ) : null}
-        {currentUser.role === 'superadmin' ? (
+        {isSuperAdmin(currentUser.role) ? (
           <Route path="/config-center" element={<ConfigCenter />} />
         ) : null}
         <Route path="/alerts" element={<AlertsCenter />} />

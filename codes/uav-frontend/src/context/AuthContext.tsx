@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { authApi, type UserInfo } from '../services/api';
 import { getToken, setToken } from '../services/http';
+import { normalizeRole } from '../utils/roles';
 
 interface AuthContextValue {
   currentUser: UserInfo | null;
@@ -19,7 +20,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (token) {
       authApi
         .profile()
-        .then(user => setCurrentUser({ ...user, role: (user.role as string)?.toLowerCase?.() ?? user.role }))
+        .then(user => setCurrentUser({ ...user, role: normalizeRole(user.role) }))
         .catch(() => {
           setToken(null);
           setCurrentUser(null);
@@ -33,7 +34,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       login: async (username, password) => {
         const res = await authApi.login({ username, password });
         setToken(res.token);
-        const user = { ...res.user, role: (res.user.role as string)?.toLowerCase?.() ?? res.user.role };
+        const user = { ...res.user, role: normalizeRole(res.user.role) };
         setCurrentUser(user);
         return user;
       },

@@ -47,7 +47,7 @@ public class MissionService {
     if (statuses != null && !statuses.isEmpty()) {
       wrapper.in(Mission::getStatus, statuses);
     }
-    applyPilotScope(wrapper, scope);
+    applyDepartmentScope(wrapper, scope);
     List<Mission> missions = missionMapper.selectList(wrapper);
     return missions.stream().map(this::toDto).collect(Collectors.toList());
   }
@@ -69,9 +69,12 @@ public class MissionService {
     Mission mission = new Mission();
     mission.setMissionCode(generateMissionCode());
     mission.setName(request.name());
-    User pilot = findPilot(scope.superAdmin() ? request.pilotUsername() : scope.username());
+    User pilot = resolveMissionPilot(scope, request.pilotUsername());
     mission.setMissionType(request.missionType());
+    mission.setDepartmentId(pilot.getDepartmentId());
+    mission.setDepartmentName(pilot.getDepartmentName());
     mission.setPilotName(pilot.getName());
+    mission.setPilotUsername(pilot.getUsername());
     mission.setPriority(request.priority());
     if (request.ruleId() != null) {
       Long templateRuleCount =
@@ -86,10 +89,15 @@ public class MissionService {
       if (rule == null) {
         throw new IllegalArgumentException("报警规则不存在");
       }
+      if (rule.getDepartmentId() != null
+          && pilot.getDepartmentId() != null
+          && !rule.getDepartmentId().equals(pilot.getDepartmentId())) {
+        throw new IllegalArgumentException("报警规则不属于当前部门");
+      }
       mission.setRuleId(rule.getId());
     }
     mission.setProgress(0);
-    List<UavDevice> assignedDevices = findAssignedDevices(request.assignedUavs(), scope);
+    List<UavDevice> assignedDevices = findAssignedDevices(request.assignedUavs(), scope, pilot.getDepartmentId());
     missionQueueService
         .validateAssignedDispatchReadiness(request.route(), assignedDevices, request.priority())
         .ifPresent(reason -> {
@@ -182,13 +190,18 @@ public class MissionService {
   }
 
   private List<UavDevice> findAssignedDevices(List<String> assignedUavCodes, AccessScope scope) {
+    return findAssignedDevices(assignedUavCodes, scope, scope.departmentId());
+  }
+
+  private List<UavDevice> findAssignedDevices(
+      List<String> assignedUavCodes, AccessScope scope, Long departmentId) {
     if (assignedUavCodes == null || assignedUavCodes.isEmpty()) {
       return List.of();
     }
     LambdaQueryWrapper<UavDevice> wrapper =
         new LambdaQueryWrapper<UavDevice>().in(UavDevice::getUavCode, assignedUavCodes);
-    if (!scope.superAdmin()) {
-      wrapper.eq(UavDevice::getPilotName, scope.displayName());
+    if (departmentId != null) {
+      wrapper.eq(UavDevice::getDepartmentId, departmentId);
     }
     List<UavDevice> devices = uavDeviceMapper.selectList(wrapper);
     if (devices.size() != assignedUavCodes.size()) {
@@ -249,10 +262,24 @@ public class MissionService {
     if (pilot == null) {
       throw new IllegalArgumentException("责任人不存在");
     }
-    if (pilot.getRole() != UserRole.OPERATOR && pilot.getRole() != UserRole.SUPERADMIN) {
+    if (pilot.getRole() != UserRole.EXECUTOR && pilot.getRole() != UserRole.DEPT_LEAD) {
       throw new IllegalArgumentException("责任人角色无效");
     }
     return pilot;
+  }
+
+  private User resolveMissionPilot(AccessScope scope, String requestedPilotUsername) {
+    if (scope.superAdmin()) {
+      return findPilot(requestedPilotUsername);
+    }
+    if (scope.isDeptLead()) {
+      User pilot = findPilot(requestedPilotUsername);
+      if (!scope.inDepartment(pilot.getDepartmentId())) {
+        throw new IllegalArgumentException("只能为本部门成员创建任务");
+      }
+      return pilot;
+    }
+    return findPilot(scope.username());
   }
 
   private void pushStatusUpdate(Mission mission) {
@@ -292,14 +319,14 @@ public class MissionService {
     pushStatusUpdate(mission);
   }
 
-  private void applyPilotScope(LambdaQueryWrapper<Mission> wrapper, AccessScope scope) {
-    if (!scope.superAdmin()) {
-      wrapper.eq(Mission::getPilotName, scope.displayName());
+  private void applyDepartmentScope(LambdaQueryWrapper<Mission> wrapper, AccessScope scope) {
+    if (!scope.superAdmin() && scope.departmentId() != null) {
+      wrapper.eq(Mission::getDepartmentId, scope.departmentId());
     }
   }
 
   private boolean canAccessMission(AccessScope scope, Mission mission) {
-    return scope.superAdmin() || scope.displayName().equals(mission.getPilotName());
+    return scope.superAdmin() || scope.inDepartment(mission.getDepartmentId());
   }
 
   private void ensureMissionAccess(AccessScope scope, Mission mission) {

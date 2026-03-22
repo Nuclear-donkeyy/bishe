@@ -10,6 +10,8 @@ public record TaskExecutionDto(
     String executionCode,
     String missionName,
     String missionType,
+    Long departmentId,
+    String departmentName,
     String location,
     String ownerName,
     Instant completedAt,

@@ -22,7 +22,13 @@ public class AccessScopeService {
         Optional.ofNullable(
                 userMapper.selectOne(new LambdaQueryWrapper<User>().eq(User::getUsername, username)))
             .orElseThrow(() -> new IllegalStateException("当前用户不存在"));
-    return new AccessScope(user.getRole() == UserRole.SUPERADMIN, user.getUsername(), user.getName());
+    return new AccessScope(
+        user.getRole() == UserRole.SUPERADMIN,
+        user.getUsername(),
+        user.getName(),
+        user.getRole(),
+        user.getDepartmentId(),
+        user.getDepartmentName());
   }
 
   public boolean isSuperAdmin() {

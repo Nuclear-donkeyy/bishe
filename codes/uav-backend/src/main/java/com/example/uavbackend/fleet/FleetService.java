@@ -50,7 +50,7 @@ public class FleetService {
   public org.springframework.data.domain.Page<UavDeviceDto> list(List<UavStatus> statuses, int page, int size) {
     AccessScope scope = accessScopeService.currentScope();
     LambdaQueryWrapper<UavDevice> wrapper = new LambdaQueryWrapper<>();
-    applyPilotScope(wrapper, scope);
+    applyDepartmentScope(wrapper, scope);
     Page<UavDevice> mpPage = deviceMapper.selectPage(Page.of(Math.max(page, 1), size), wrapper);
     List<UavDevice> records = mpPage.getRecords();
     List<UavDevice> filtered =
@@ -78,7 +78,12 @@ public class FleetService {
     if (deviceMapper.exists(new LambdaQueryWrapper<UavDevice>().eq(UavDevice::getUavCode, request.uavCode()))) {
       throw new IllegalArgumentException("无人机编号已存在");
     }
-    String effectivePilotUsername = scope.superAdmin() ? request.pilotUsername() : scope.username();
+    String effectivePilotUsername;
+    if (scope.superAdmin() || scope.isDeptLead()) {
+      effectivePilotUsername = request.pilotUsername();
+    } else {
+      effectivePilotUsername = scope.username();
+    }
     User pilot =
         Optional.ofNullable(
                 userMapper.selectOne(
@@ -86,9 +91,15 @@ public class FleetService {
                         .eq(User::getUsername, effectivePilotUsername)
                         .eq(User::getStatus, UserStatus.ACTIVE)))
             .orElseThrow(() -> new IllegalArgumentException("责任人不存在或已禁用"));
+    if (!scope.superAdmin() && !scope.inDepartment(pilot.getDepartmentId())) {
+      throw new IllegalArgumentException("只能接入本部门无人机");
+    }
     UavDevice device = new UavDevice();
     device.setUavCode(request.uavCode());
     device.setModel(request.model());
+    device.setDepartmentId(pilot.getDepartmentId());
+    device.setDepartmentName(pilot.getDepartmentName());
+    device.setOwnerUsername(scope.username());
     device.setPilotName(pilot.getName());
     
     int rows = deviceMapper.insert(device);
@@ -102,18 +113,25 @@ public class FleetService {
   private UavDeviceDto toDto(UavDevice entity) {
     List<String> sensors = loadSensorCodes(entity.getId());
     // 前端状态仅从 WebSocket 遥测推送得出，这里不返回 status
-    return new UavDeviceDto(entity.getId(), entity.getUavCode(), entity.getModel(), entity.getPilotName(), sensors);
+    return new UavDeviceDto(
+        entity.getId(),
+        entity.getUavCode(),
+        entity.getModel(),
+        entity.getPilotName(),
+        entity.getDepartmentName(),
+        entity.getOwnerUsername(),
+        sensors);
   }
 
   private List<UavDevice> loadScopedDevices(AccessScope scope) {
     LambdaQueryWrapper<UavDevice> wrapper = new LambdaQueryWrapper<>();
-    applyPilotScope(wrapper, scope);
+    applyDepartmentScope(wrapper, scope);
     return deviceMapper.selectList(wrapper);
   }
 
-  private void applyPilotScope(LambdaQueryWrapper<UavDevice> wrapper, AccessScope scope) {
-    if (!scope.superAdmin()) {
-      wrapper.eq(UavDevice::getPilotName, scope.displayName());
+  private void applyDepartmentScope(LambdaQueryWrapper<UavDevice> wrapper, AccessScope scope) {
+    if (!scope.superAdmin() && scope.departmentId() != null) {
+      wrapper.eq(UavDevice::getDepartmentId, scope.departmentId());
     }
   }
 

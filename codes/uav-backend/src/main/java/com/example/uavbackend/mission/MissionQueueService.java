@@ -140,7 +140,7 @@ public class MissionQueueService {
     saveQueueItem(item);
   }
 
-  @Scheduled(fixedDelay = 3000)
+  @Scheduled(initialDelay = 5000, fixedDelay = 3000)
   public void processQueue() {
     reconcileRunningMissionStates();
     rebalanceRunningMissions();

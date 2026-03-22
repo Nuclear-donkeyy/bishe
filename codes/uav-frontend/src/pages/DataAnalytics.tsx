@@ -46,6 +46,7 @@ import {
   type TaskExecutionDto
 } from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import { isSuperAdmin } from '../utils/roles';
 
 const { RangePicker } = DatePicker;
 
@@ -249,10 +250,9 @@ function DataAnalytics() {
   }, []);
 
   useEffect(() => {
-    if (currentUser?.role === 'superadmin') {
-      return;
+    if (!isSuperAdmin(currentUser?.role)) {
+      form.setFieldsValue({ operatorName: undefined });
     }
-    form.setFieldsValue({ operatorName: currentUser?.name });
   }, [currentUser, form]);
 
   const selectedMissionType = Form.useWatch('missionType', form);
@@ -1207,7 +1207,7 @@ function DataAnalytics() {
                 <Input placeholder="按无人机编码筛选" />
               </Form.Item>
             </Col>
-            {currentUser?.role === 'superadmin' ? (
+            {isSuperAdmin(currentUser?.role) ? (
               <Col xs={24} md={4}>
                 <Form.Item name="operatorName" label="操作人">
                   <Input placeholder="按操作人筛选" />

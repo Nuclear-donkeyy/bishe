@@ -5,12 +5,15 @@ export interface UserRow {
   username: string;
   name: string;
   role: string;
+  departmentId?: number;
+  departmentName?: string;
   status?: string;
 }
 
 export const userApi = {
-  list: () => http.get<UserRow[]>('/users').then(r => ensureSuccess(r.data, '获取用户失败')),
-  create: (payload: { username: string; password: string; name?: string; role: string }) =>
+  list: (departmentId?: number) =>
+    http.get<UserRow[]>('/users', { params: { departmentId } }).then(r => ensureSuccess(r.data, '获取用户失败')),
+  create: (payload: { username: string; password: string; name?: string; role: string; departmentId?: number }) =>
     http.post<UserRow>('/users', payload).then(r => ensureSuccess(r.data, '新增用户失败')),
   delete: (id: number) =>
     http.delete(`/users/${id}`).then(r => {

@@ -10,6 +10,8 @@ public record AlertRuleDto(
     Boolean templateEnabled,
     Long templateId,
     String templateName,
+    Long departmentId,
+    String departmentName,
     String templateCode,
     String templateCategory,
     Boolean autoInterrupt,

@@ -102,6 +102,12 @@ public class AuthService {
   }
 
   private UserDto toDto(User user) {
-    return new UserDto(user.getId(), user.getUsername(), user.getName(), user.getRole());
+    return new UserDto(
+        user.getId(),
+        user.getUsername(),
+        user.getName(),
+        user.getRole(),
+        user.getDepartmentId(),
+        user.getDepartmentName());
   }
 }

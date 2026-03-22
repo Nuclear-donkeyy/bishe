@@ -13,6 +13,8 @@ public class TaskExecution extends BaseEntity {
   private String executionCode;
   private String missionName;
   private String missionType;
+  private Long departmentId;
+  private String departmentName;
   private String location;
   private String ownerName;
   private Instant completedAt;

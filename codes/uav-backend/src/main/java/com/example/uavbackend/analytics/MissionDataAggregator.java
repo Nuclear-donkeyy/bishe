@@ -49,6 +49,8 @@ public class MissionDataAggregator {
     String pilotName;
     String operatorName;
     String missionType;
+    Long departmentId;
+    String departmentName;
     Map<String, Stat> stats = new HashMap<>();
   }
 
@@ -61,6 +63,8 @@ public class MissionDataAggregator {
     agg.pilotName = mission.getPilotName();
     agg.operatorName = mission.getPilotName(); // 简化为同 pilotName，可按需调整
     agg.missionType = mission.getMissionType();
+    agg.departmentId = mission.getDepartmentId();
+    agg.departmentName = mission.getDepartmentName();
     data.forEach(
         (k, v) -> {
           if (v == null) return;
@@ -98,6 +102,8 @@ public class MissionDataAggregator {
     record.setMissionId(mission.getId());
     record.setMissionCode(mission.getMissionCode());
     record.setMissionType(agg.missionType);
+    record.setDepartmentId(agg.departmentId);
+    record.setDepartmentName(agg.departmentName);
     record.setPilotName(agg.pilotName);
     record.setUavCode(agg.uavCode);
     record.setOperatorName(agg.operatorName);
@@ -164,6 +170,8 @@ public class MissionDataAggregator {
 
     execution.setMissionName(mission.getName());
     execution.setMissionType(mission.getMissionType());
+    execution.setDepartmentId(agg.departmentId);
+    execution.setDepartmentName(agg.departmentName);
     execution.setLocation(agg.uavCode);
     execution.setOwnerName(agg.operatorName);
     execution.setCompletedAt(completedAt.atZone(ZoneId.systemDefault()).toInstant());

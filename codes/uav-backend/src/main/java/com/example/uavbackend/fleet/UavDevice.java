@@ -11,5 +11,8 @@ import lombok.Setter;
 public class UavDevice extends BaseEntity {
   private String uavCode;
   private String model;
+  private Long departmentId;
+  private String departmentName;
+  private String ownerUsername;
   private String pilotName;
 }

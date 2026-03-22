@@ -20,6 +20,9 @@ public class AlertRule {
   private Long templateId;
   private String templateCode;
   private String templateCategory;
+  private Long departmentId;
+  private String departmentName;
+  private String createdBy;
   private Boolean autoInterrupt;
   private Boolean notifyEnabled;
   private String notifyChannels;

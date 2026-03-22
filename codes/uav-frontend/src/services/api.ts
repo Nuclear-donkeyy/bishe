@@ -17,7 +17,9 @@ export interface UserInfo {
   id: number;
   username: string;
   name: string;
-  role: 'SUPERADMIN' | 'OPERATOR' | string;
+  role: 'SUPERADMIN' | 'DEPT_LEAD' | 'EXECUTOR' | string;
+  departmentId?: number;
+  departmentName?: string;
 }
 export interface LoginResponse {
   token: string;
@@ -46,6 +48,8 @@ export interface UavDevice {
   uavCode: string;
   model: string;
   pilotName: string;
+  departmentName?: string;
+  ownerUsername?: string;
   sensors?: string[];
 }
 
@@ -146,6 +150,8 @@ export interface TaskExecutionDto {
   executionCode: string;
   missionName: string;
   missionType: string;
+  departmentId?: number;
+  departmentName?: string;
   location?: string;
   ownerName?: string;
   completedAt: string;
@@ -289,9 +295,48 @@ export interface UserRow {
   username: string;
   name: string;
   role: string;
+  departmentId?: number;
+  departmentName?: string;
+}
+
+export interface DepartmentRow {
+  id: number;
+  deptCode: string;
+  deptName: string;
+  description?: string;
+  status: 'ACTIVE' | 'DISABLED' | string;
+  memberCount: number;
+  leadCount: number;
+  executorCount: number;
 }
 export const userApi = {
-  list: () => http.get<UserRow[]>('/users').then(r => ensureSuccess<UserRow[]>(r.data, '获取用户失败'))
+  list: (departmentId?: number) =>
+    http.get<UserRow[]>('/users', { params: { departmentId } }).then(r => ensureSuccess<UserRow[]>(r.data, '获取用户失败')),
+  create: (payload: { username: string; password: string; name?: string; role: string; departmentId?: number }) =>
+    http.post<UserRow>('/users', payload).then(r => ensureSuccess<UserRow>(r.data, '新增用户失败')),
+  delete: (id: number) =>
+    http.delete(`/users/${id}`).then(r => {
+      if (r.data && (r.data as any).success === false) {
+        throw new Error((r.data as any).message || '删除用户失败');
+      }
+      return;
+    }),
+  resetPassword: (id: number) => http.post(`/users/${id}/reset-password`).then(() => void 0)
+};
+
+export const departmentApi = {
+  list: () => http.get<DepartmentRow[]>('/departments').then(r => ensureSuccess<DepartmentRow[]>(r.data, '获取部门失败')),
+  create: (payload: { deptCode: string; deptName: string; description?: string; status?: string }) =>
+    http.post<DepartmentRow>('/departments', payload).then(r => ensureSuccess<DepartmentRow>(r.data, '新增部门失败')),
+  update: (id: number, payload: { deptCode: string; deptName: string; description?: string; status?: string }) =>
+    http.put<DepartmentRow>(`/departments/${id}`, payload).then(r => ensureSuccess<DepartmentRow>(r.data, '更新部门失败')),
+  delete: (id: number) =>
+    http.delete(`/departments/${id}`).then(r => {
+      if (r.data && (r.data as any).success === false) {
+        throw new Error((r.data as any).message || '删除部门失败');
+      }
+      return;
+    })
 };
 
 // Config Center (任务类型/指标/传感器)
@@ -378,6 +423,8 @@ export interface AlertRule {
   templateEnabled: boolean;
   templateId?: number;
   templateName?: string;
+  departmentId?: number;
+  departmentName?: string;
   templateCode?: string;
   templateCategory?: string;
   autoInterrupt: boolean;
@@ -409,6 +456,7 @@ export interface AlertRulePayload {
   logicOperator: string;
   templateEnabled?: boolean;
   templateId?: number;
+  departmentId?: number;
   templateCode?: string;
   templateCategory?: string;
   autoInterrupt?: boolean;

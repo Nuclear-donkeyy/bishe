@@ -114,7 +114,7 @@ public class AnalyticsService {
     AccessScope scope = accessScopeService.currentScope();
     List<TaskExecutionDto> persisted = loadPersistedTaskExecutions(missionType, from, to);
     List<TaskExecutionDto> scopedPersisted =
-        persisted.stream().filter(item -> canAccessOwner(scope, item.ownerName())).toList();
+        persisted.stream().filter(item -> canAccessDepartment(scope, item.departmentId())).toList();
     if (!scopedPersisted.isEmpty()) {
       return scopedPersisted;
     }
@@ -235,6 +235,7 @@ public class AnalyticsService {
   }
 
   private List<TaskExecutionDto> loadPersistedTaskExecutions(String missionType, Instant from, Instant to) {
+    AccessScope scope = accessScopeService.currentScope();
     if (!StringUtils.hasText(missionType)) {
       return List.of();
     }
@@ -250,6 +251,9 @@ public class AnalyticsService {
       wrapper.ge(TaskExecution::getCompletedAt, from);
     } else if (to != null) {
       wrapper.le(TaskExecution::getCompletedAt, to);
+    }
+    if (!scope.superAdmin() && scope.departmentId() != null) {
+      wrapper.eq(TaskExecution::getDepartmentId, scope.departmentId());
     }
     wrapper.orderByAsc(TaskExecution::getCompletedAt);
     return taskExecutionMapper.selectList(wrapper).stream().map(this::toDto).toList();
@@ -275,10 +279,7 @@ public class AnalyticsService {
     wrapper.orderByAsc(MissionDataRecord::getEndTime);
     List<MissionDataRecord> records = recordMapper.selectList(wrapper);
     if (!scope.superAdmin()) {
-      records =
-          records.stream()
-              .filter(record -> canAccessOwner(scope, record.getOperatorName(), record.getPilotName()))
-              .toList();
+      records = records.stream().filter(record -> canAccessDepartment(scope, record.getDepartmentId())).toList();
     }
     if (records.isEmpty()) {
       return deriveTaskExecutionsFromMissions(missionType, scope);
@@ -498,6 +499,8 @@ public class AnalyticsService {
                   mission.getMissionCode(),
                   mission.getName(),
                   mission.getMissionType(),
+                  mission.getDepartmentId(),
+                  mission.getDepartmentName(),
                   null,
                   mission.getPilotName(),
                   toInstant(derived.endTime()),
@@ -533,6 +536,8 @@ public class AnalyticsService {
         record.getMissionCode(),
         mission == null ? record.getMissionCode() : mission.getName(),
         record.getMissionType(),
+        record.getDepartmentId(),
+        record.getDepartmentName(),
         record.getUavCode(),
         record.getPilotName(),
         toInstant(record.getEndTime()),
@@ -545,6 +550,8 @@ public class AnalyticsService {
         exec.getExecutionCode(),
         exec.getMissionName(),
         exec.getMissionType(),
+        exec.getDepartmentId(),
+        exec.getDepartmentName(),
         exec.getLocation(),
         exec.getOwnerName(),
         exec.getCompletedAt(),
@@ -902,11 +909,7 @@ public class AnalyticsService {
         wrapper.eq(MissionDataRecord::getOperatorName, operatorName);
       }
     } else {
-      wrapper.and(
-          w ->
-              w.eq(MissionDataRecord::getOperatorName, scope.displayName())
-                  .or()
-                  .eq(MissionDataRecord::getPilotName, scope.displayName()));
+      wrapper.eq(MissionDataRecord::getDepartmentId, scope.departmentId());
     }
     if (missionCode != null) {
       wrapper.eq(MissionDataRecord::getMissionCode, missionCode);
@@ -940,20 +943,8 @@ public class AnalyticsService {
         avgMap);
   }
 
-  private boolean canAccessOwner(AccessScope scope, String... ownerNames) {
-    if (scope.superAdmin()) {
-      return true;
-    }
-    for (String ownerName : ownerNames) {
-      if (StringUtils.hasText(ownerName) && ownerName.equals(scope.displayName())) {
-        return true;
-      }
-    }
-    return false;
-  }
-
   private boolean canAccessMission(AccessScope scope, Mission mission) {
-    return scope.superAdmin() || (mission != null && StringUtils.hasText(mission.getPilotName()) && mission.getPilotName().equals(scope.displayName()));
+    return scope.superAdmin() || (mission != null && scope.inDepartment(mission.getDepartmentId()));
   }
 
   private List<String> filterAccessibleMissionCodes(List<String> missionCodes, AccessScope scope) {
@@ -964,11 +955,15 @@ public class AnalyticsService {
         .selectList(
             new LambdaQueryWrapper<Mission>()
                 .in(Mission::getMissionCode, missionCodes)
-                .eq(Mission::getPilotName, scope.displayName()))
+                .eq(Mission::getDepartmentId, scope.departmentId()))
         .stream()
         .map(Mission::getMissionCode)
         .distinct()
         .toList();
+  }
+
+  private boolean canAccessDepartment(AccessScope scope, Long departmentId) {
+    return scope.superAdmin() || scope.inDepartment(departmentId);
   }
 
   private String resolveUavCodeFromMissionEvents(List<MissionEvent> missionEvents) {

@@ -12,7 +12,10 @@ public class Mission extends BaseEntity {
   private String missionCode;
   private String name;
   private String missionType;
+  private Long departmentId;
+  private String departmentName;
   private String pilotName;
+  private String pilotUsername;
   private String status;
   private String priority;
   private Integer progress = 0;

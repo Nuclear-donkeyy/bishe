@@ -12,6 +12,7 @@ import type { MenuProps } from 'antd';
 import { useMemo } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { canManageAlerts, canManagePersonnel, isSuperAdmin, roleLabel } from '../utils/roles';
 
 const { Header, Sider, Content } = Layout;
 
@@ -27,10 +28,12 @@ function MainLayout() {
       { key: '/missions', icon: <RocketOutlined />, label: '任务指挥' },
       { key: '/monitoring', icon: <RadarChartOutlined />, label: '实时监控' },
       { key: '/analytics', icon: <BarChartOutlined />, label: '数据分析' },
-      { key: '/alerts', icon: <AlertOutlined />, label: currentUser?.role === 'superadmin' ? '报警规则管理' : '报警记录' }
+      { key: '/alerts', icon: <AlertOutlined />, label: canManageAlerts(currentUser?.role) ? '报警规则管理' : '报警记录' }
     ];
-    if (currentUser?.role === 'superadmin') {
-      base.push({ key: '/personnel', icon: <TeamOutlined />, label: '人员管理' });
+    if (canManagePersonnel(currentUser?.role)) {
+      base.push({ key: '/personnel', icon: <TeamOutlined />, label: '部门与成员管理' });
+    }
+    if (isSuperAdmin(currentUser?.role)) {
       base.push({ key: '/config-center', icon: <ProfileOutlined />, label: '任务与指标配置' });
     }
     return base;
@@ -96,7 +99,8 @@ function MainLayout() {
               <div className="app-usermeta">
                 <Typography.Text className="app-username">{currentUser.name}</Typography.Text>
                 <Typography.Text className="app-userrole">
-                  {currentUser.role === 'superadmin' ? '系统管理员' : '业务操作员'}
+                  {roleLabel(currentUser.role)}
+                  {currentUser.departmentName ? ` · ${currentUser.departmentName}` : ''}
                 </Typography.Text>
               </div>
               <Button size="small" onClick={logout}>

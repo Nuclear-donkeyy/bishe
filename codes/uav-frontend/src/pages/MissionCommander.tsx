@@ -36,6 +36,7 @@ import {
 } from '../services/api';
 import { connectTelemetrySocket, getTelemetryWebSocketUrl } from '../services/ws';
 import { useAuth } from '../context/AuthContext';
+import { isDeptLead, isSuperAdmin, roleLabel } from '../utils/roles';
 
 const pointsEqual = (a: LatLngTuple, b: LatLngTuple) =>
   Math.abs(a[0] - b[0]) < 1e-6 && Math.abs(a[1] - b[1]) < 1e-6;
@@ -153,7 +154,7 @@ function MissionCommander() {
   }, []);
 
   useEffect(() => {
-    if (currentUser?.role === 'superadmin') {
+    if (isSuperAdmin(currentUser?.role) || isDeptLead(currentUser?.role)) {
       return;
     }
     form.setFieldsValue({ pilotUsername: currentUser?.username });
@@ -228,15 +229,13 @@ function MissionCommander() {
   );
 
   const pilotOptions = useMemo(() => {
-    const isOperator = (role?: string) => (role || '').toLowerCase() == 'operator';
-    const operators = users.filter(u => isOperator(u.role));
-    const base = operators.length ? operators : users;
+    const base = users.filter(u => !isSuperAdmin(u.role));
     return base.map(u => ({
       value: u.username,
-      label: `${u.name} (${u.role})`
+      label: `${u.name} (${roleLabel(u.role)})`
     }));
   }, [users]);
-  const currentUserIsAdmin = currentUser?.role === 'superadmin';
+  const currentUserIsAdmin = isSuperAdmin(currentUser?.role) || isDeptLead(currentUser?.role);
 
   const routeIsClosed =
     routeDraft.length > 2 && pointsEqual(routeDraft[0], routeDraft[routeDraft.length - 1]);

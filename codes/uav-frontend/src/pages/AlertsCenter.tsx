@@ -24,14 +24,17 @@ import { useEffect, useState } from 'react';
 import {
   alertApi,
   configApi,
+  departmentApi,
   missionApi,
   type AlertCondition,
   type AlertRecord,
   type AlertRule,
+  type DepartmentRow,
   type MetricItem,
   type MissionDto
 } from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import { canManageAlerts, isSuperAdmin } from '../utils/roles';
 
 type ConfigMode = 'template' | 'rule';
 
@@ -39,6 +42,7 @@ type RuleForm = {
   name: string;
   templateEnabled?: boolean;
   templateId?: number;
+  departmentId?: number;
   templateCode?: string;
   templateCategory?: string;
   description?: string;
@@ -57,6 +61,7 @@ function AlertsCenter() {
   const [rules, setRules] = useState<AlertRule[]>([]);
   const [records, setRecords] = useState<AlertRecord[]>([]);
   const [metrics, setMetrics] = useState<MetricItem[]>([]);
+  const [departments, setDepartments] = useState<DepartmentRow[]>([]);
   const [missions, setMissions] = useState<MissionDto[]>([]);
   const [activeRuleId, setActiveRuleId] = useState<number | null>(null);
   const [recordMissionCodes, setRecordMissionCodes] = useState<string[]>([]);
@@ -68,10 +73,11 @@ function AlertsCenter() {
   const [loadingRules, setLoadingRules] = useState(false);
   const [loadingRecords, setLoadingRecords] = useState(false);
   const notifyEnabled = Form.useWatch('notifyEnabled', ruleForm);
-  const isSuperAdmin = currentUser?.role === 'superadmin';
+  const isAlertManager = canManageAlerts(currentUser?.role);
+  const currentUserIsSuperAdmin = isSuperAdmin(currentUser?.role);
 
   const loadRules = async () => {
-    if (!isSuperAdmin) {
+    if (!isAlertManager) {
       setTemplates([]);
       setRules([]);
       setActiveRuleId(null);
@@ -113,19 +119,20 @@ function AlertsCenter() {
       .list()
       .then(res => setMetrics((res as MetricItem[]) || []))
       .catch(() => setMetrics([]));
+    departmentApi.list().then(setDepartments).catch(() => setDepartments([]));
     missionApi.list().then(setMissions).catch(() => setMissions([]));
     loadRules();
-  }, [isSuperAdmin]);
+  }, [isAlertManager]);
 
   useEffect(() => {
-    if (!isSuperAdmin) {
+    if (!isAlertManager) {
       loadRecords(undefined, recordMissionCodes);
     } else if (activeRuleId != null) {
       loadRecords(activeRuleId, recordMissionCodes);
     } else {
       setRecords([]);
     }
-  }, [activeRuleId, isSuperAdmin, recordMissionCodes]);
+  }, [activeRuleId, isAlertManager, recordMissionCodes]);
 
   const metricOptions = metrics.map(metric => ({ label: `${metric.name} (${metric.metricCode})`, value: metric.metricCode }));
   const templateOptions = templates.map(template => ({
@@ -135,6 +142,10 @@ function AlertsCenter() {
   const missionOptions = missions.map(item => ({
     label: `${item.name} · ${item.missionCode}`,
     value: item.missionCode
+  }));
+  const departmentOptions = departments.map(item => ({
+    label: `${item.deptName} (${item.deptCode})`,
+    value: item.id
   }));
 
   const resetModal = () => {
@@ -149,6 +160,7 @@ function AlertsCenter() {
     ruleForm.setFieldsValue({
       templateEnabled: mode === 'template',
       templateId: undefined,
+      departmentId: undefined,
       templateCode: undefined,
       templateCategory: undefined,
       logicOperator: 'AND',
@@ -169,6 +181,7 @@ function AlertsCenter() {
     }
     ruleForm.setFieldsValue({
       templateId: template.id,
+      departmentId: template.departmentId,
       description: template.description,
       logicOperator: template.logicOperator,
       autoInterrupt: template.autoInterrupt,
@@ -192,6 +205,7 @@ function AlertsCenter() {
           name: values.name,
           templateEnabled: editorMode === 'template',
           templateId: editorMode === 'rule' ? values.templateId : undefined,
+          departmentId: currentUserIsSuperAdmin ? values.departmentId : undefined,
           templateCode: editorMode === 'template' ? values.templateCode : undefined,
           templateCategory: editorMode === 'template' ? values.templateCategory : undefined,
           description: values.description,
@@ -230,6 +244,7 @@ function AlertsCenter() {
       name: rule.name,
       templateEnabled: rule.templateEnabled,
       templateId: rule.templateId,
+      departmentId: rule.departmentId,
       templateCode: rule.templateCode,
       templateCategory: rule.templateCategory,
       description: rule.description,
@@ -312,7 +327,7 @@ function AlertsCenter() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16, minHeight: '100vh' }}>
       <Row gutter={[16, 16]} style={{ flex: 1, minHeight: '80vh', height: '100%' }}>
-        {isSuperAdmin ? (
+        {isAlertManager ? (
         <Col xs={24} lg={9} style={{ height: '100%', display: 'flex' }}>
           <Card
             title="告警配置"
@@ -365,6 +380,7 @@ function AlertsCenter() {
                         </Typography.Text>
                         <Space size={[4, 4]} wrap>
                           {item.templateEnabled ? <Tag color="purple">模板</Tag> : <Tag>普通规则</Tag>}
+                          {item.departmentName ? <Tag color="blue">{item.departmentName}</Tag> : null}
                           {item.templateCategory ? <Tag>{item.templateCategory}</Tag> : null}
                           {item.templateCode ? <Tag color="purple">{item.templateCode}</Tag> : null}
                           {!item.templateEnabled && item.templateName ? <Tag color="cyan">继承 {item.templateName}</Tag> : null}
@@ -406,8 +422,8 @@ function AlertsCenter() {
         </Col>
         ) : null}
 
-        <Col xs={24} lg={isSuperAdmin ? 15 : 24} style={{ height: '100%', display: 'flex' }}>
-          {isSuperAdmin ? (
+        <Col xs={24} lg={isAlertManager ? 15 : 24} style={{ height: '100%', display: 'flex' }}>
+          {isAlertManager ? (
           configMode === 'rule' ? (
             <Card
               title="报警记录"
@@ -467,7 +483,7 @@ function AlertsCenter() {
                   allowClear
                   maxTagCount={2}
                   style={{ minWidth: 320, maxWidth: '100%' }}
-                  placeholder="按我的任务筛选待处理报警"
+                  placeholder="按本部门任务筛选待处理报警"
                   value={recordMissionCodes}
                   options={missionOptions}
                   onChange={value => setRecordMissionCodes(value)}
@@ -475,7 +491,7 @@ function AlertsCenter() {
               }
             >
               <Typography.Paragraph type="secondary">
-                当前仅展示与你负责任务相关、且仍待处理的报警记录。
+                当前仅展示本部门仍待处理的报警记录。
               </Typography.Paragraph>
               <Table
                 rowKey="id"
@@ -491,7 +507,7 @@ function AlertsCenter() {
         </Col>
       </Row>
 
-      {isSuperAdmin ? (
+      {isAlertManager ? (
       <Modal
         title={
           editingRule
@@ -513,6 +529,11 @@ function AlertsCenter() {
           layout="vertical"
           initialValues={{ logicOperator: 'AND', autoInterrupt: false, notifyEnabled: false }}
         >
+          {currentUserIsSuperAdmin ? (
+            <Form.Item name="departmentId" label="所属部门" rules={[{ required: true, message: '请选择所属部门' }]}>
+              <Select options={departmentOptions} placeholder="选择规则归属部门" />
+            </Form.Item>
+          ) : null}
           <Form.Item name="name" label={editorMode === 'template' ? '模板名称' : '规则名称'} rules={[{ required: true, message: '请输入名称' }]}>
             <Input placeholder={editorMode === 'template' ? '如：低电量联动模板' : '如：巡检低电量规则'} />
           </Form.Item>

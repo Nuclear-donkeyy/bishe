@@ -7,6 +7,8 @@ import com.example.uavbackend.alert.dto.AlertRuleDto;
 import com.example.uavbackend.alert.dto.ConditionDto;
 import com.example.uavbackend.auth.AccessScope;
 import com.example.uavbackend.auth.AccessScopeService;
+import com.example.uavbackend.auth.Department;
+import com.example.uavbackend.auth.DepartmentMapper;
 import com.example.uavbackend.mission.Mission;
 import com.example.uavbackend.mission.MissionMapper;
 import java.time.LocalDateTime;
@@ -27,30 +29,45 @@ public class AlertService {
   private final AlertRuleConditionMapper conditionMapper;
   private final AlertRecordMapper recordMapper;
   private final MissionMapper missionMapper;
+  private final DepartmentMapper departmentMapper;
   private final AccessScopeService accessScopeService;
 
   public List<AlertRuleDto> listRules() {
     AccessScope scope = accessScopeService.currentScope();
-    if (!scope.superAdmin()) {
+    if (scope.isExecutor()) {
       return List.of();
     }
-    List<AlertRule> rules = ruleMapper.selectList(new LambdaQueryWrapper<>());
+    LambdaQueryWrapper<AlertRule> wrapper = new LambdaQueryWrapper<>();
+    if (!scope.superAdmin() && scope.departmentId() != null) {
+      wrapper.eq(AlertRule::getDepartmentId, scope.departmentId());
+    }
+    List<AlertRule> rules = ruleMapper.selectList(wrapper);
     return mapRules(rules);
   }
 
   public List<AlertRuleDto> listTemplates() {
     AccessScope scope = accessScopeService.currentScope();
-    if (!scope.superAdmin()) {
+    if (scope.isExecutor()) {
       return List.of();
     }
-    List<AlertRule> templates =
-        ruleMapper.selectList(new LambdaQueryWrapper<AlertRule>().eq(AlertRule::getTemplateEnabled, true));
+    LambdaQueryWrapper<AlertRule> wrapper =
+        new LambdaQueryWrapper<AlertRule>().eq(AlertRule::getTemplateEnabled, true);
+    if (!scope.superAdmin() && scope.departmentId() != null) {
+      wrapper.eq(AlertRule::getDepartmentId, scope.departmentId());
+    }
+    List<AlertRule> templates = ruleMapper.selectList(wrapper);
     return mapRules(templates);
   }
 
   public List<AlertRuleDto> listAssignableRules() {
+    AccessScope scope = accessScopeService.currentScope();
+    LambdaQueryWrapper<AlertRule> wrapper =
+        new LambdaQueryWrapper<AlertRule>().eq(AlertRule::getTemplateEnabled, false);
+    if (!scope.superAdmin() && scope.departmentId() != null) {
+      wrapper.eq(AlertRule::getDepartmentId, scope.departmentId());
+    }
     List<AlertRule> rules =
-        ruleMapper.selectList(new LambdaQueryWrapper<AlertRule>().eq(AlertRule::getTemplateEnabled, false));
+        ruleMapper.selectList(wrapper);
     return mapRules(rules);
   }
 
@@ -93,10 +110,11 @@ public class AlertService {
 
   @Transactional
   public AlertRuleDto createRule(AlertRuleCreateRequest req) {
-    ensureSuperAdmin();
+    AccessScope scope = ensureRuleManager();
+    Department department = resolveRuleDepartment(scope, req.departmentId());
     if (Boolean.TRUE.equals(req.templateEnabled())) {
       AlertRule template = new AlertRule();
-      applyTemplateFields(template, req);
+      applyTemplateFields(template, req, scope, department);
       template.setCreatedAt(LocalDateTime.now());
       template.setUpdatedAt(LocalDateTime.now());
       ruleMapper.insert(template);
@@ -104,8 +122,11 @@ public class AlertService {
       return toDto(template, 0, null);
     }
     AlertRule template = resolveTemplate(req.templateId());
+    if (template != null && !canAccessRule(scope, template)) {
+      throw new IllegalArgumentException("无权使用该模板");
+    }
     AlertRule rule = new AlertRule();
-    applyRuleFields(rule, req, template);
+    applyRuleFields(rule, req, template, scope, department);
     rule.setCreatedAt(LocalDateTime.now());
     rule.setUpdatedAt(LocalDateTime.now());
     ruleMapper.insert(rule);
@@ -115,13 +136,15 @@ public class AlertService {
 
   @Transactional
   public AlertRuleDto updateRule(Long ruleId, AlertRuleCreateRequest req) {
-    ensureSuperAdmin();
+    AccessScope scope = ensureRuleManager();
     AlertRule rule = ruleMapper.selectById(ruleId);
     if (rule == null) {
       throw new IllegalArgumentException("规则不存在");
     }
+    ensureRuleAccess(scope, rule);
+    Department department = resolveRuleDepartment(scope, req.departmentId());
     if (Boolean.TRUE.equals(rule.getTemplateEnabled())) {
-      applyTemplateFields(rule, req);
+      applyTemplateFields(rule, req, scope, department);
       rule.setUpdatedAt(LocalDateTime.now());
       ruleMapper.updateById(rule);
       conditionMapper.delete(new LambdaQueryWrapper<AlertRuleCondition>().eq(AlertRuleCondition::getRuleId, ruleId));
@@ -129,7 +152,10 @@ public class AlertService {
       return toDto(rule, unreadCount(ruleId), null);
     }
     AlertRule template = resolveTemplate(req.templateId());
-    applyRuleFields(rule, req, template);
+    if (template != null && !canAccessRule(scope, template)) {
+      throw new IllegalArgumentException("无权使用该模板");
+    }
+    applyRuleFields(rule, req, template, scope, department);
     rule.setUpdatedAt(LocalDateTime.now());
     ruleMapper.updateById(rule);
     conditionMapper.delete(new LambdaQueryWrapper<AlertRuleCondition>().eq(AlertRuleCondition::getRuleId, ruleId));
@@ -139,9 +165,13 @@ public class AlertService {
 
   @Transactional
   public void deleteRule(Long ruleId) {
-    ensureSuperAdmin();
+    AccessScope scope = ensureRuleManager();
     AlertRule rule = ruleMapper.selectById(ruleId);
-    if (rule != null && Boolean.TRUE.equals(rule.getTemplateEnabled())) {
+    if (rule == null) {
+      return;
+    }
+    ensureRuleAccess(scope, rule);
+    if (Boolean.TRUE.equals(rule.getTemplateEnabled())) {
       Long referencedCount =
           ruleMapper.selectCount(new LambdaQueryWrapper<AlertRule>().eq(AlertRule::getTemplateId, ruleId));
       if (referencedCount != null && referencedCount > 0) {
@@ -182,6 +212,8 @@ public class AlertService {
         Boolean.TRUE.equals(rule.getTemplateEnabled()),
         rule.getTemplateId(),
         template == null ? null : template.getName(),
+        rule.getDepartmentId(),
+        rule.getDepartmentName(),
         Boolean.TRUE.equals(rule.getTemplateEnabled()) ? rule.getTemplateCode() : null,
         Boolean.TRUE.equals(rule.getTemplateEnabled()) ? rule.getTemplateCategory() : null,
         Boolean.TRUE.equals(rule.getAutoInterrupt()),
@@ -214,7 +246,8 @@ public class AlertService {
     return template;
   }
 
-  private void applyTemplateFields(AlertRule template, AlertRuleCreateRequest req) {
+  private void applyTemplateFields(
+      AlertRule template, AlertRuleCreateRequest req, AccessScope scope, Department department) {
     String name = trimToNull(req.name());
     if (name == null) {
       throw new IllegalArgumentException("模板名称不能为空");
@@ -222,6 +255,9 @@ public class AlertService {
     template.setName(name);
     template.setTemplateEnabled(true);
     template.setTemplateId(null);
+    template.setDepartmentId(department == null ? scope.departmentId() : department.getId());
+    template.setDepartmentName(department == null ? scope.departmentName() : department.getDeptName());
+    template.setCreatedBy(scope.username());
     template.setDescription(trimToNull(req.description()));
     template.setLogicOperator(firstNonBlank(req.logicOperator(), "AND"));
     template.setTemplateCode(trimToNull(req.templateCode()));
@@ -233,7 +269,12 @@ public class AlertService {
     template.setNotifyTemplate(trimToNull(req.notifyTemplate()));
   }
 
-  private void applyRuleFields(AlertRule rule, AlertRuleCreateRequest req, AlertRule template) {
+  private void applyRuleFields(
+      AlertRule rule,
+      AlertRuleCreateRequest req,
+      AlertRule template,
+      AccessScope scope,
+      Department department) {
     String name = trimToNull(req.name());
     if (name == null) {
       throw new IllegalArgumentException("规则名称不能为空");
@@ -243,6 +284,15 @@ public class AlertService {
     rule.setTemplateId(template == null ? null : template.getId());
     rule.setTemplateCode(null);
     rule.setTemplateCategory(null);
+    rule.setDepartmentId(
+        template != null
+            ? template.getDepartmentId()
+            : department == null ? scope.departmentId() : department.getId());
+    rule.setDepartmentName(
+        template != null
+            ? template.getDepartmentName()
+            : department == null ? scope.departmentName() : department.getDeptName());
+    rule.setCreatedBy(scope.username());
     rule.setDescription(firstNonBlank(req.description(), template == null ? null : template.getDescription()));
     rule.setLogicOperator(firstNonBlank(req.logicOperator(), template == null ? null : template.getLogicOperator(), "AND"));
     rule.setAutoInterrupt(resolveBoolean(req.autoInterrupt(), template == null ? null : template.getAutoInterrupt(), false));
@@ -336,12 +386,6 @@ public class AlertService {
         r.getNotificationStatus());
   }
 
-  private void ensureSuperAdmin() {
-    if (!accessScopeService.isSuperAdmin()) {
-      throw new IllegalArgumentException("无权操作报警规则");
-    }
-  }
-
   private boolean canAccessAlertRecord(AccessScope scope, AlertRecord record) {
     if (scope.superAdmin()) {
       return true;
@@ -354,7 +398,7 @@ public class AlertService {
             new LambdaQueryWrapper<Mission>()
                 .eq(Mission::getMissionCode, record.getMissionCode())
                 .last("limit 1"));
-    return mission != null && scope.displayName().equals(mission.getPilotName());
+    return mission != null && scope.inDepartment(mission.getDepartmentId());
   }
 
   private List<String> loadAccessibleMissionCodes(AccessScope scope) {
@@ -362,9 +406,49 @@ public class AlertService {
       return List.of();
     }
     return missionMapper
-        .selectList(new LambdaQueryWrapper<Mission>().eq(Mission::getPilotName, scope.displayName()))
+        .selectList(
+            new LambdaQueryWrapper<Mission>().eq(Mission::getDepartmentId, scope.departmentId()))
         .stream()
         .map(Mission::getMissionCode)
         .toList();
+  }
+
+  private AccessScope ensureRuleManager() {
+    AccessScope scope = accessScopeService.currentScope();
+    if (scope.isExecutor()) {
+      throw new IllegalArgumentException("无权操作报警规则");
+    }
+    return scope;
+  }
+
+  private Department resolveRuleDepartment(AccessScope scope, Long departmentId) {
+    if (scope.superAdmin()) {
+      if (departmentId == null) {
+        return null;
+      }
+      Department department = departmentMapper.selectById(departmentId);
+      if (department == null) {
+        throw new IllegalArgumentException("部门不存在");
+      }
+      return department;
+    }
+    if (scope.departmentId() == null) {
+      throw new IllegalArgumentException("当前用户未归属部门");
+    }
+    Department department = departmentMapper.selectById(scope.departmentId());
+    if (department == null) {
+      throw new IllegalArgumentException("当前部门不存在");
+    }
+    return department;
+  }
+
+  private void ensureRuleAccess(AccessScope scope, AlertRule rule) {
+    if (!canAccessRule(scope, rule)) {
+      throw new IllegalArgumentException("无权操作该报警规则");
+    }
+  }
+
+  private boolean canAccessRule(AccessScope scope, AlertRule rule) {
+    return scope.superAdmin() || scope.inDepartment(rule.getDepartmentId());
   }
 }

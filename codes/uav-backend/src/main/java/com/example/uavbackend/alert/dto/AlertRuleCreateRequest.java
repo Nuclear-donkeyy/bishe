@@ -8,6 +8,7 @@ public record AlertRuleCreateRequest(
     String logicOperator,
     Boolean templateEnabled,
     Long templateId,
+    Long departmentId,
     String templateCode,
     String templateCategory,
     Boolean autoInterrupt,

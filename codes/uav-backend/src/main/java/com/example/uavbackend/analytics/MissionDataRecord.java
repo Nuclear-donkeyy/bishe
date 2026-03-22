@@ -15,6 +15,8 @@ public class MissionDataRecord {
   private Long missionId;
   private String missionCode;
   private String missionType;
+  private Long departmentId;
+  private String departmentName;
   private String pilotName;
   private String uavCode;
   private String operatorName;
@@ -24,4 +26,3 @@ public class MissionDataRecord {
   private String dataMin; // JSON string
   private String dataAvg; // JSON string
 }
-

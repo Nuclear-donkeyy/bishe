@@ -21,6 +21,7 @@ import { fleetApi, configApi, userApi, type FleetSummary, type UavDevice } from 
 import { useAuth } from '../context/AuthContext';
 import { connectTelemetrySocket } from '../services/ws';
 import { getUavStatusMeta } from '../utils/uavStatus';
+import { isDeptLead, isExecutor, isSuperAdmin } from '../utils/roles';
 
 type RegisterForm = {
   uavCode: string;
@@ -90,16 +91,17 @@ function FleetCenter() {
   }, []);
 
   useEffect(() => {
-    if (currentUser?.role === 'superadmin') {
+    if (isSuperAdmin(currentUser?.role) || isDeptLead(currentUser?.role)) {
       return;
     }
     form.setFieldsValue({ pilotUsername: currentUser?.username });
   }, [currentUser, form]);
 
-  const visibleFleet = useMemo(() => {
-    if (currentUser?.role === 'superadmin') return fleet;
-    return fleet.filter(item => item.pilotName === currentUser?.name);
-  }, [fleet, currentUser]);
+  const visibleFleet = useMemo(() => fleet, [fleet]);
+  const canAssignPilot = useMemo(
+    () => isSuperAdmin(currentUser?.role) || isDeptLead(currentUser?.role),
+    [currentUser?.role]
+  );
 
   const connectionHealth = useMemo(() => {
     const online = visibleFleet.filter(item => telemetryRef.current[item.uavCode]).length;
@@ -306,9 +308,9 @@ function FleetCenter() {
           >
             <Select
               options={userOptions}
-              placeholder={currentUser?.role === 'superadmin' ? '选择责任人（操作员/超级管理员）' : '当前登录执行者'}
+              placeholder={canAssignPilot ? '选择本部门责任人' : '当前登录执行者'}
               showSearch
-              disabled={currentUser?.role !== 'superadmin'}
+              disabled={!canAssignPilot || isExecutor(currentUser?.role)}
               filterOption={(input, option) =>
                 (option?.label as string).toLowerCase().includes(input.toLowerCase())
               }
